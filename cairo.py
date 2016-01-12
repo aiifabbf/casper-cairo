@@ -172,13 +172,97 @@ ANTIALIAS_FAST = 4
 ANTIALIAS_GOOD = 5
 ANTIALIAS_BEST = 6
 
+#cairo_path_data_type
+PATH_MOVE_TO = 0
+PATH_LINE_TO = 1
+PATH_CURVE_TO = 2
+PATH_CLOSE_PATH = 3
+
+class cairo_rectangle_t(ctypes.Structure):
+    _fields_ = [
+    ("x", ctypes.c_double), 
+    ("y", ctypes.c_double), 
+    ("width", ctypes.c_double), 
+    ("height", ctypes.c_double)]
+
+class cairo_rectangle_list_t(ctypes.Structure):
+    _fields_ = [
+    ("status", ctypes.c_int), 
+    ("rectangles", ctypes.POINTER(cairo_rectangle_t)), 
+    ("num_rectangles", ctypes.c_int)]
+
+"""
+typedef union _cairo_path_data_t cairo_path_data_t;
+union _cairo_path_data_t {
+    struct {
+    cairo_path_data_type_t type;
+    int length;
+    } header;
+    struct {
+    double x, y;
+    } point;
+};
+"""
+
+class cairo_path_data_t(ctypes.Union):
+
+    class header(ctypes.Structure):
+        _fields_ = [
+        ("type", ctypes.c_int), 
+        ("length", ctypes.c_int)]
+
+    class point(ctypes.Structure):
+        _fields_ = [
+        ("x", ctypes.c_double), 
+        ("y", ctypes.c_double)]
+
+class cairo_path_t(ctypes.Structure):
+    _fields_ = [
+    ("status", ctypes.c_int), 
+    ("data", ctypes.POINTER(cairo_path_data_t)),
+    ("num_data", ctypes.c_int)]
+
+class cairo_font_extents_t(ctypes.Structure):
+    _fields_ = [
+    ("ascent", ctypes.c_double),
+    ("descent", ctypes.c_double),
+    ("height", ctypes.c_double),
+    ("max_x_advance", ctypes.c_double),
+    ("max_y_advance", ctypes.c_double)]
+
 class Error(Exception): 
     """
     This exception is raised when a cairo object returns an error status.
     """
     pass
 
+class Path:
+    """
+    Path cannot be instantiated directly, it is created by calling Context.copy_path() and Context.copy_path_flat().
+
+    *It can be instantiated by _from_address().
+    """
+    def __init__(self):
+        self._path_t = None
+
+    @property
+    def _as_parameter_(self):
+        return self._path_t
+
+    @classmethod
+    def _from_address(cls, address):
+        path = object.__new__(cls)
+        path._path_t = ctypes.POINTER(cairo_path_t).from_address(address)
+        return path
+
 class Surface:
+    """
+    Surface is the abstract base class from which all the other surface classes derive. 
+
+    It cannot be instantiated directly.
+
+    *It can be instantiated by Surface._from_address() and casper-cairo will return a corresponding type(determined by _cairo.cairo_surface_get_type()) of surface.
+    """
 
     def __init__(self):
         self._surface_t = None
@@ -449,7 +533,7 @@ class ImageSurface(Surface):
         return surface
 
     @staticmethod
-    def format_stride_for_width(self, format, width):
+    def format_stride_for_width(format, width):
         """
         This method provides a stride value that will respect all alignment requirements of the accelerated image-rendering code within cairo. 
 
@@ -471,7 +555,7 @@ class ImageSurface(Surface):
         cairo_image_surface_get_data() in cairo
         """
         ## Still thinking about how to return a memoryview object which is more pythonic, though c_char_Array_* itself supports nearly everything a memoryview has.
-        return ctypes.c_char_p*(self.get_width()*self.get_height()).from_address(self._surface_t)
+        return (ctypes.c_char*(self.get_width()*self.get_height())).from_address(_cairo.cairo_image_surface_get_data(self._surface_t))
 
     def get_format(self):
         return _cairo.cairo_image_surface_get_format(self._surface_t)
@@ -487,10 +571,260 @@ class ImageSurface(Surface):
 
 
 class Context:
+    """
+    Context is the main object used when drawing with cairo. To draw with cairo, you create a Context, set the target surface, and drawing options for the Context, create shapes with functions like Context.move_to() and Context.line_to(), and then draw shapes with Context.stroke() or Context.fill().
+
+    Contexts can be pushed to a stack via Context.save(). They may then safely be changed, without loosing the current state. Use Context.restore() to restore to the saved state.
+    """
 
     def __init__(self, target):
-        self._cairo_t = _cairo.cairo_create(target._surface_t)
+        """"
+        Creates a new Context with all graphics state parameters set to default values and with target as a target surface. The target surface should be constructed with a backend-specific function such as ImageSurface (or any other cairo backend surface create variant).
+
+        Origin:
+        cairo.Context() in pycairo
+        cairo_create() in cairo
+        """
+        try:
+            self._cairo_t = _cairo.cairo_create(target._surface_t)
+        except:
+            raise Error("MemoryError: Insufficient memory.")
         self._as_parameter_ = self._cairo_t
+
+    def append_path(self, path):
+        """
+        @param  path (Path object): to be appended
+        Append the path onto the current path. The path may be either the return value from one of Context.copy_path() or Context.copy_path_flat() or it may be constructed manually (in C).
+
+        Origin:
+        cairo.Context.append_path() in pycairo
+        cairo_append_path() in cairo
+        """
+        _cairo.cairo_append_path(path._path_t)
+
+    def arc(self, xc, yc, radius, angle1, angle2):
+        """
+        @param xc (float): X position of the center of the arc
+        @param yc (float): Y position of the center of the arc
+        @param radius (float): the radius of the arc
+        @param angle1 (float): the start angle, in radians
+        @param angle2 (float): the end angle, in radians
+        Adds a circular arc of the given radius to the current path. The arc is centered at (xc, yc), begins at angle1 and proceeds in the direction of increasing angles to end at angle2. If angle2 is less than angle1 it will be progressively increased by 2*PI until it is greater than angle1.
+
+        If there is a current point, an initial line segment will be added to the path to connect the current point to the beginning of the arc. If this initial line is undesired, it can be avoided by calling Context.new_sub_path() before calling Context.arc().
+
+        Angles are measured in radians. An angle of 0.0 is in the direction of the positive X axis (in user space). An angle of PI/2.0 radians (90 degrees) is in the direction of the positive Y axis (in user space). Angles increase in the direction from the positive X axis toward the positive Y axis. So with the default transformation matrix, angles increase in a clockwise direction.
+
+        To convert from degrees to radians, use degrees * (math.pi / 180).
+
+        This function gives the arc in the direction of increasing angles; see Context.arc_negative() to get the arc in the direction of decreasing angles.
+
+        This function gives the arc in the direction of increasing angles; see Context.arc_negative() to get the arc in the direction of decreasing angles.
+
+        The arc is circular in user space. To achieve an elliptical arc, you can scale the current transformation matrix by different amounts in the X and Y directions. For example, to draw an ellipse in the box given by x, y, width, height:
+
+            ctx.save()
+            ctx.translate(x + width / 2., y + height / 2.)
+            ctx.scale(width / 2., height / 2.)
+            ctx.arc(0., 0., 1., 0., 2 * math.pi)
+            ctx.restore()
+
+        Origin:
+        cairo.Context.arc() in pycairo
+        cairo_arc() in cairo
+        """
+        _cairo.cairo_arc(*[ctypes.c_double(i) for i in (xc, yc, radius, angle1, angle2)])
+
+    def arc_negative(self, xc, yc, radius, angle1, angle2):
+        """
+        Adds a circular arc of the given radius to the current path. The arc is centered at (xc, yc), begins at angle1 and proceeds in the direction of decreasing angles to end at angle2. If angle2 is greater than angle1 it will be progressively decreased by 2*PI until it is less than angle1.
+
+        See Context.arc() for more details. This function differs only in the direction of the arc between the two angles.
+
+        Origin:
+        cairo.Context.arc_negative() in pycairo
+        cairo_arc_negative() in cairo
+        """
+        _cairo.cairo_arc(*[ctypes.c_double(i) for i in (xc, yc, radius, angle1, angle2)])
+
+    def clip(self):
+        """
+        Establishes a new clip region by intersecting the current clip region with the current path as it would be filled by Context.fill() and according to the current FILL RULE (see Context.set_fill_rule()).
+
+        After clip(), the current path will be cleared from the Context.
+
+        The current clip region affects all drawing operations by effectively masking out any changes to the surface that are outside the current clip region.
+
+        Calling clip() can only make the clip region smaller, never larger. But the current clip is part of the graphics state, so a temporary restriction of the clip region can be achieved by calling clip() within a Context.save()/Context.restore() pair. The only other means of increasing the size of the clip region is Context.reset_clip().
+
+        Origin:
+        cairo.Context.clip() in pycairo
+        cairo_clip() in cairo
+        """
+        _cairo.cairo_clip(self._cairo_t)
+
+    def clip_extents(self):
+        """
+        @return: (x1, y1, x2, y2)
+        x1: left of the resulting extents
+        y1: top of the resulting extents
+        x2: right of the resulting extents
+        y2: bottom of the resulting extents
+        Computes a bounding box in user coordinates covering the area inside the current clip.
+
+        Origin:
+        cairo.Context.clip_extents() in pycairo
+        cairo_clip_extents() in cairo
+        """
+        x1, y1, x2, y2 = [ctypes.c_double() for i in range(4)]
+        _cairo.cairo_clip_extents(self._cairo_t, *[ctypes.byref(i) for i in (x1, y1, x2, y2)])
+        return tuple(i.value for i in (x1, y1, x2, y2))
+
+    def clip_preserve(self):
+        """
+        Establishes a new clip region by intersecting the current clip region with the current path as it would be filled by Context.fill() and according to the current FILL RULE (see Context.set_fill_rule()).
+
+        Unlike Context.clip(), clip_preserve() preserves the path within the Context.
+
+        The current clip region affects all drawing operations by effectively masking out any changes to the surface that are outside the current clip region.
+
+        Calling clip_preserve() can only make the clip region smaller, never larger. But the current clip is part of the graphics state, so a temporary restriction of the clip region can be achieved by calling clip_preserve() within a Context.save()/Context.restore() pair. The only other means of increasing the size of the clip region is Context.reset_clip().
+
+        Origin:
+        cairo.Context.clip_preserve() in pycairo
+        cairo_clip_preserve() in cairo
+        """
+        _cairo.cairo_clip_preserve(self._cairo_t)
+
+    def close_path(self):
+        """
+        Adds a line segment to the path from the current point to the beginning of the current sub-path, (the most recent point passed to Context.move_to()), and closes this sub-path. After this call the current point will be at the joined endpoint of the sub-path.
+
+        The behavior of close_path() is distinct from simply calling Context.line_to() with the equivalent coordinate in the case of stroking. When a closed sub-path is stroked, there are no caps on the ends of the sub-path. Instead, there is a line join connecting the final and initial segments of the sub-path.
+
+        If there is no current point before the call to close_path(), this function will have no effect.
+
+        Note: As of cairo version 1.2.4 any call to close_path() will place an explicit MOVE_TO element into the path immediately after the CLOSE_PATH element, (which can be seen in Context.copy_path() for example). This can simplify path processing in some cases as it may not be necessary to save the “last move_to point” during processing as the MOVE_TO immediately after the CLOSE_PATH will provide that point.
+
+        Origin:
+        cairo.Context.close_path() in pycairo
+        cairo_close_path() in cairo
+        """
+        _cairo.cairo_close_path(self._cairo_t)
+
+    def copy_clip_rectangle_list(self):
+        """
+        @return: list of tuple(x, y, width, height)
+        float x: X coordinate of the left side of the rectangle
+        float y: Y coordinate of the the top side of the rectangle
+        float width: width of the rectangle
+        float height: height of the rectangle
+
+        Gets the current clip region as a list of rectangles in user coordinates. Never returns None.
+
+        The status in the list may be STATUS_CLIP_NOT_REPRESENTABLE to indicate that the clip region cannot be represented as a list of user-space rectangles. The status may have other values to indicate other errors.
+
+        Origin:
+        cairo.Context.copy_clip_rectangle_list() in pycairo (yet not available)
+        cairo_copy_clip_rectangle_list() in cairo
+        """
+        _cairo.cairo_copy_clip_rectangle_list.restype = ctypes.POINTER(cairo_rectangle_list_t)
+        rectangle_list_t = _cairo.cairo_copy_clip_rectangle_list(self._cairo_t)
+        rectangle_list = []
+        for num in range(rectangle_list_t.contents.num_rectangles):
+            i = rectangle_list_t.contents.rectangles[num]
+            rectangle_list.append((i.x, i.y, i.width, i.height))
+        return rectangle_list
+
+    def copy_page(self):
+        """
+        Emits the current page for backends that support multiple pages, but doesn’t clear it, so, the contents of the current page will be retained for the next page too. Use Context.show_page() if you want to get an empty page after the emission.
+
+        This is a convenience function that simply calls Surface.copy_page() on Context’s target.
+
+        Origin:
+        cairo.Context.copy_page() in pycairo
+        cairo_copy_page() in cairo
+        """
+        _cairo.cairo_copy_page(self._cairo_t)
+
+    def copy_path(self):
+        """
+        @return path (Path object)
+        Creates a copy of the current path and returns it to the user as a Path. Raises MemoryError in case of no memory.
+
+        Origin:
+        cairo.Context.copy_path() in pycairo
+        cairo_copy_path() in cairo
+        """
+        path = Path._from_address(_cairo.cairo_copy_path(self._cairo_t))
+        if path._path_t.contents.status == STATUS_NO_MEMORY: raise Error("MemoryError: Insufficient memory.")
+        return path
+
+    def copy_path_flat(self):
+        """
+        Gets a flattened copy of the current path and returns it to the user as a Path.
+
+        This function is like Context.copy_path() except that any curves in the path will be approximated with piecewise-linear approximations, (accurate to within the current tolerance value). That is, the result is guaranteed to not have any elements of type CAIRO_PATH_CURVE_TO which will instead be replaced by a series of PATH_LINE_TO elements.
+
+        Origin:
+        cairo.Context.copy_path_flat() in pycairo
+        cairo_copy_path_flat() in cairo
+        """
+        path = Path._from_address(_cairo.cairo_copy_path_flat(self._cairo_t))
+        if path._path_t.contents.status == STATUS_NO_MEMORY: raise Error("MemoryError: Insufficient memory.")
+        return path
+
+    def curve_to(self, x1, y1, x2, y2, x3, y3):
+        """
+        Adds a cubic Bézier spline to the path from the current point to position (x3, y3) in user-space coordinates, using (x1, y1) and (x2, y2) as the control points. After this call the current point will be (x3, y3).
+
+        If there is no current point before the call to curve_to() this function will behave as if preceded by a call to ctx.move_to(x1, y1).
+
+        Origin:
+        cairo.Context.curve_to() in pycairo
+        cairo_curve_to() in cairo
+        """
+        x1, y1, x2, y2, x3, y3 = [ctypes.c_double(i) for i in (x1, y1, x2, y2, x3, y3)]
+        _cairo.cairo_curve_to(self._cairo_t, x1, y1, x2, y2, x3, y3)
+
+    def fill(self):
+        """
+        A drawing operator that fills the current path according to the current FILL RULE, (each sub-path is implicitly closed before being filled). After fill(), the current path will be cleared from the Context. See Context.set_fill_rule() and Context.fill_preserve().
+        """
+        _cairo.cairo_fill(self._cairo_t)
+
+    # benjaminish
+    def fill_extents(self):
+        """
+        @return tuple(x1, y1, x2, y2)
+        Computes a bounding box in user coordinates covering the area that would be affected, (the “inked” area), by a Context.fill() operation given the current path and fill parameters. If the current path is empty, returns an empty rectangle (0,0,0,0). Surface dimensions and clipping are not taken into account.
+
+        Contrast with Context.path_extents(), which is similar, but returns non-zero extents for some paths with no inked area, (such as a simple line segment).
+
+        Note that fill_extents() must necessarily do more work to compute the precise inked areas in light of the fill rule, so Context.path_extents() may be more desirable for sake of performance if the non-inked path extents are desired.
+
+        See Context.fill(), Context.set_fill_rule() and Context.fill_preserve().
+        """
+        x1, y1, x2, y2 = [ctypes.c_double() for i in range(4)]
+        _cairo.cairo_fill_extents(self._cairo_t, *[ctypes.byref(i) for i in (x1, y1, x2, y2)])
+        return tuple(i.value for i in (x1, y1, x2, y2))
+
+    def fill_preserve(self):
+        """
+        A drawing operator that fills the current path according to the current FILL RULE, (each sub-path is implicitly closed before being filled). Unlike Context.fill(), fill_preserve() preserves the path within the Context.
+
+        See Context.set_fill_rule() and Context.fill().
+        """
+        _cairo.cairo_fill_preserve(self._cairo_t)
+
+    def font_extents(self):
+        """
+        Gets the font extents for the currently selected font.
+        """
+        font_extents_t = cairo_font_extents_t()
+        _cairo.cairo_font_extents(self._cairo_t, ctypes.byref(font_extents_t))
+        return (font_extents_t.ascent, font_extents_t.descent, font_extents_t.height, font_extents_t.max_x_advance, font_extents_t.max_y_advance)
 
     def reference(self, cr):
         _cairo.cairo_reference(self._cairo_t)
@@ -545,20 +879,6 @@ class Context:
 
     def get_antialise(self):
         return _cairo.cairo_get_antialias(self._cairo_t)
-
-    ###
-
-    def fill(self):
-        _cairo.cairo_fill(self._cairo_t)
-
-    def fill_preserve(self):
-        _cairo.cairo_fill_preserve(self._cairo_t)
-
-    # benjaminish
-    def fill_extents(self):
-        x1, y1, x2, y2 = [ctypes.c_int() for i in range(4)]
-        _cairo.cairo_fill_extents(self._cairo_t, *[ctypes.byref(i) for i in (x1, y1, x2, y2)])
-        return (x1, y1, x2, y2)
 
     def in_fill(self, x, y):
         return True if _cairo.cairo_in_fill(self._cairo_t, x, y) == 1 else False
