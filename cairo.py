@@ -472,7 +472,7 @@ class Surface:
         Taking cairo's way
         """
         ## pycairo's way is better
-        _cairo.cairo_surface_write_to_png(self._cairo_t, filename)
+        _cairo.cairo_surface_write_to_png(self._surface_t, filename)
 
 
 class ImageSurface(Surface):
@@ -497,6 +497,7 @@ class ImageSurface(Surface):
         """
         @param cls: class
         @param data: data pointer(ctypes.c_char_p or simple an int representing the haed address)
+        Note 2016/1/13: Now data can be any Python supporting writable buffer.
         @param width (int): 
         @param height (int): 
         @param stride (int): 
@@ -511,6 +512,50 @@ class ImageSurface(Surface):
         surface = object.__new__(cls)
         surface._surface_t = _cairo.cairo_image_surface_create_for_data(data, format, width, height, stride)
         #surface._as_parameter_ = surface._surface_t
+        """Tested five methods:
+
+        - ctypes.c_char_p method
+
+        bb = bytearray(40000)
+        b = ctypes.c_char_p.from_buffer(bb)
+        s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 100, 100, 400)
+
+        Result: Does not work. bb doesn't seem to change.
+
+        - ctypes.c_char_p, byref method
+
+        bb = bytearray(40000)
+        b = ctypes.c_char_p.from_buffer(bb)
+        s = ImageSurface.create_for_data(ctypes.byref(b), FORMAT_ARGB32, 100, 100, 400)
+
+        Result: Works. bb changes. But segmentation fault when accessing b.
+
+        - ctypes.c_char_Array_* method
+
+        bb = bytearray(40000)
+        b = (ctypes.c_char*len(bb)).from_buffer(bb)
+        s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 100, 100, 400)
+
+        Result: Works. bb changes. No problem found.
+
+        - ctypes.c_char_Array_*, byref method
+
+        bb = bytearray(40000)
+        b = (ctypes.c_char*len(bb)).from_buffer(bb)
+        s = ImageSurface.create_for_data(ctypes.byref(b), FORMAT_ARGB32, 100, 100, 400)
+
+        Result: Works. No problem found.
+
+        - ctypes.c_char, byref method
+
+        bb = bytearray(40000)
+        b = ctypes.c_char.from_buffer(bb)
+        s = ImageSurface.create_for_data(ctypes.byref(b), FORMAT_ARGB32, 100, 100, 400)
+
+        Result: Works. No problem found.
+
+        I prefer the ctypes.c_char_Array_* method being inserted here to let @param data be any Python writable buffer.
+        """
         return surface
 
     @classmethod
@@ -555,6 +600,7 @@ class ImageSurface(Surface):
         cairo_image_surface_get_data() in cairo
         """
         ## Still thinking about how to return a memoryview object which is more pythonic, though c_char_Array_* itself supports nearly everything a memoryview has.
+        ## Note 2016/1/13: memoryview doenst support format <c. Don't know what's wrong.
         return (ctypes.c_char*(self.get_width()*self.get_height())).from_address(_cairo.cairo_image_surface_get_data(self._surface_t))
 
     def get_format(self):
@@ -578,7 +624,7 @@ class Context:
     """
 
     def __init__(self, target):
-        """"
+        """
         Creates a new Context with all graphics state parameters set to default values and with target as a target surface. The target surface should be constructed with a backend-specific function such as ImageSurface (or any other cairo backend surface create variant).
 
         Origin:
@@ -593,7 +639,7 @@ class Context:
 
     def append_path(self, path):
         """
-        @param  path (Path object): to be appended
+        @param path (Path object): to be appended
         Append the path onto the current path. The path may be either the return value from one of Context.copy_path() or Context.copy_path_flat() or it may be constructed manually (in C).
 
         Origin:
@@ -797,7 +843,7 @@ class Context:
     # benjaminish
     def fill_extents(self):
         """
-        @return tuple(x1, y1, x2, y2)
+        @return: tuple(x1, y1, x2, y2)
         Computes a bounding box in user coordinates covering the area that would be affected, (the “inked” area), by a Context.fill() operation given the current path and fill parameters. If the current path is empty, returns an empty rectangle (0,0,0,0). Surface dimensions and clipping are not taken into account.
 
         Contrast with Context.path_extents(), which is similar, but returns non-zero extents for some paths with no inked area, (such as a simple line segment).
@@ -824,7 +870,10 @@ class Context:
         """
         font_extents_t = cairo_font_extents_t()
         _cairo.cairo_font_extents(self._cairo_t, ctypes.byref(font_extents_t))
-        return (font_extents_t.ascent, font_extents_t.descent, font_extents_t.height, font_extents_t.max_x_advance, font_extents_t.max_y_advance)
+        return tuple(getattr(font_extents_t, i[0]) for i in font_extents_t._fields_)
+        """address = ctypes.c_int(0)
+        _cairo.cairo_font_extents(self._cairo_t, ctypes.byref(address))
+        return struct.unpack("5d", ctypes.string_at(address, ctypes.sizeof(ctypes.c_double)*5))"""
 
     def reference(self, cr):
         _cairo.cairo_reference(self._cairo_t)
@@ -889,6 +938,9 @@ class Context:
     def paint(self):
         _cairo.cairo_paint(self._cairo_t)
 
+    def paint_with_alpha(self, alpha):
+        _cairo.cairo_paint_with_alpha(self._cairo_t, ctypes.c_double(alpha))
+
 
 _surface_types = {
     SURFACE_TYPE_IMAGE: ImageSurface,
@@ -920,8 +972,17 @@ _surface_types = {
 
 if __name__ == "__main__":
     # testing
+    """
     s = ImageSurface(FORMAT_ARGB32, 100, 100)
     c = Context(s)
-    c.set_source_rgba(0.5, 0.5, 0.5, 1)
+    c.set_source_rgba(1, 1, 1, 1)
     c.paint()
     a = s._from_address(s._surface_t)
+    """
+    bb = bytearray(40000)
+    b = (ctypes.c_char*len(bb)).from_buffer(bb)
+    s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 100, 100, 400)
+    c = Context(s)
+    c.set_source_rgb(1, 1, 1)
+    c.paint()
+
