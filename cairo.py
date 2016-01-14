@@ -24,11 +24,14 @@ Benjamin Shi
 import ctypes
 import ctypes.util
 
+_cairo_dll = ctypes.util.find_library("cairo")
+if not _cairo_dll: raise Exception("libcairo not found.")
+
 try:
-    _cairo = ctypes.CDLL(ctypes.util.find_library("cairo"))
+    _cairo = ctypes.CDLL(_cairo_dll)
 
 except:
-    raise Exception("libcairo*.so.* not found.")
+    raise Exception("Failed to load libcairo.")
 
 # cairo_status_t
 STATUS_SUCCESS = 0
@@ -129,6 +132,11 @@ FILTER_NEAREST = 3
 FILTER_BILINEAR = 4
 FILTER_GAUSSIAN = 5
 
+# cairo_line_cap_t
+LINE_CAP_BUTT = 0
+LINE_CAP_ROUND = 1
+LINE_CAP_SQUARE = 2
+
 # cairo_operator_t
 OPERATOR_CLEAR = 0
 OPERATOR_SOURCE = 1
@@ -172,11 +180,47 @@ ANTIALIAS_FAST = 4
 ANTIALIAS_GOOD = 5
 ANTIALIAS_BEST = 6
 
+# cairo_subpixel_order_t
+SUBPIXEL_ORDER_DEFAULT = 0
+SUBPIXEL_ORDER_RGB = 1
+SUBPIXEL_ORDER_BGR = 2
+SUBPIXEL_ORDER_VRGB = 3
+SUBPIXEL_ORDER_VBGR = 4
+
+# cairo_hint_style_t
+HINT_STYLE_DEFAULT = 0
+HINT_STYLE_NONE = 1
+HINT_STYLE_SLIGHT = 2
+HINT_STYLE_MEDIUM = 3
+HINT_STYLE_FULL = 4
+
+# cairo_hint_metrics_t
+HINT_METRICS_DEFAULT = 0
+HINT_METRICS_OFF = 1
+HINT_METRICS_ON = 2
+
 #cairo_path_data_type
 PATH_MOVE_TO = 0
 PATH_LINE_TO = 1
 PATH_CURVE_TO = 2
 PATH_CLOSE_PATH = 3
+
+# cairo_fill_rule_t
+FILL_RULE_WINDING = 0
+FILL_RULE_EVEN_ODD = 1
+
+# cairo_line_join_t
+LINE_JOIN_MITER = 0
+LINE_JOIN_MITRE = 0
+LINE_JOIN_ROUND = 1
+LINE_JOIN_BEVEL = 2
+
+# cairo_font_type_t
+FONT_TYPE_TOY = 0
+FONT_TYPE_FT = 1
+FONT_TYPE_WIN32 = 2
+FONT_TYPE_QUARTZ = 3
+FONT_TYPE_USER = 4
 
 class cairo_rectangle_t(ctypes.Structure):
     _fields_ = [
@@ -230,11 +274,155 @@ class cairo_font_extents_t(ctypes.Structure):
     ("max_x_advance", ctypes.c_double),
     ("max_y_advance", ctypes.c_double)]
 
+class cairo_text_extents_t(ctypes.Structure):
+    _fields_ = [
+    ("x_bearing", ctypes.c_double),
+    ("y_bearing", ctypes.c_double),
+    ("width", ctypes.c_double),
+    ("height", ctypes.c_double),
+    ("x_advance", ctypes.c_double),
+    ("y_advance", ctypes.c_double)]
+
+class cairo_matrix_t(ctypes.Structure):
+    _fields_ = [
+    ("xx", ctypes.c_double),
+    ("yx", ctypes.c_double),
+    ("xy", ctypes.c_double),
+    ("yy", ctypes.c_double),
+    ("x0", ctypes.c_double),
+    ("y0", ctypes.c_double)]
+
 class Error(Exception): 
     """
     This exception is raised when a cairo object returns an error status.
     """
     pass
+
+class Matrix:
+    """
+    Matrix is used throughout cairo to convert between different coordinate spaces. A Matrix holds an affine transformation, such as a scale, rotation, shear, or a combination of these. The transformation of a point (x,y) is given by:
+
+    x_new = xx * x + xy * y + x0
+    y_new = yx * x + yy * y + y0
+
+    The current transformation matrix of a Context, represented as a Matrix, defines the transformation from user-space coordinates to device-space coordinates.
+
+    Some standard Python operators can be used with matrices:
+
+    To read the values from a Matrix:
+
+    xx, yx, xy, yy, x0, y0 = matrix
+    To multiply two matrices:
+
+    matrix3 = matrix1.multiply(matrix2)
+    # or equivalently
+    matrix3 = matrix1 * matrix2
+    To compare two matrices:
+
+    matrix1 == matrix2
+    matrix1 != matrix2
+    For more information on matrix transformation see http://www.cairographics.org/matrix_transform
+    """
+    _cairo.cairo_matrix_init.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+    def __init__(self, xx=1.0, yx=0.0, xy=0.0, yy=1.0, x0=0.0, y0=0.0):
+        """
+        @param xx (float): xx component of the affine transformation
+        @param yx (float): yx component of the affine transformation
+        @param xy (float): xy component of the affine transformation
+        @param yy (float): yy component of the affine transformation
+        @param x0 (float): X translation component of the affine transformation
+        @param y0 (float): Y translation component of the affine transformation
+
+        Create a new Matrix with the affine transformation given by xx, yx, xy, yy, x0, y0. The transformation is given by:
+
+        x_new = xx * x + xy * y + x0
+        y_new = yx * x + yy * y + y0
+        To create a new identity matrix:
+
+        matrix = cairo.Matrix()
+        To create a matrix with a transformation which translates by tx and ty in the X and Y dimensions, respectively:
+
+        matrix = cairo.Matrix(x0=tx, y0=ty)
+        To create a matrix with a transformation that scales by sx and sy in the X and Y dimensions, respectively:
+
+        matrix = cairo.Matrix(xx=sy, yy=sy)
+        """
+        self._matrix_t = ctypes.pointer(cairo_matrix_t())
+        _cairo.cairo_matrix_init(self._matrix_t, xx, yx, xy, yy, x0, y0)
+
+    @property
+    def _as_parameter_(self):
+        return self._matrix_t
+
+    @classmethod
+    def _from_address(cls, address):
+        matrix = object.__new__(cls)
+        matrix._matrix_t = ctypes.POINTER(cairo_matrix_t).from_address(address)
+        return matrix
+
+    def invert(self):
+        """
+        Changes Matrix to be the inverse of it’s original value. Not all transformation matrices have inverses; if the matrix collapses points together (it is degenerate), then it has no inverse and this function will fail.
+        """
+        _cairo.cairo_matrix_invert(self._matrix_t)
+
+    def multiply(self, matrix2):
+        """
+        Multiplies the affine transformations in Matrix and matrix2 together. The effect of the resulting transformation is to first apply the transformation in Matrix to the coordinates and then apply the transformation in matrix2 to the coordinates.
+
+        It is allowable for result to be identical to either Matrix or matrix2.
+
+        NOTE: the sentence above is not correct. There is no result as parameter. This function will always return a new matrix in casper-cairo.
+
+        NOTE 2016/1/14: Should I make it compatible to cairo or pycairo?
+        """
+        result = Matrix()
+        _cairo.cairo_matrix_multiply(result, self, matrix2)
+        return result
+
+    def rotate(self, radians):
+        """
+        @param radians: angle of rotation, in radians. The direction of rotation is defined such that positive angles rotate in the direction from the positive X axis toward the positive Y axis. With the default axis orientation of cairo, positive angles rotate in a clockwise direction.
+
+        Applies rotation by radians to the transformation in matrix . The effect of the new transformation is to first rotate the coordinates by radians , then apply the original transformation to the coordinates.
+        """
+        _cairo.cairo_matrix_rotate(self, ctypes.c_double(radians))
+
+    _cairo.cairo_matrix_scale.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
+    def scale(self, sx, sy):
+        """
+        Applies scaling by sx , sy to the transformation in matrix . The effect of the new transformation is to first scale the coordinates by sx and sy , then apply the original transformation to the coordinates.
+        """
+        _cairo.cairo_matrix_scale(self, sx, sy)
+
+    def transform_distance(self, dx, dy):
+        """
+        Transforms the distance vector (dx ,dy ) by matrix . This is similar to cairo_matrix_transform_point() except that the translation components of the transformation are ignored. The calculation of the returned vector is as follows:
+
+        dx2 = dx1 * a + dy1 * c;
+        dy2 = dx1 * b + dy1 * d;
+
+        Affine transformations are position invariant, so the same vector always transforms to the same vector. If (x1 ,y1 ) transforms to (x2 ,y2 ) then (x1 +dx1 ,y1 +dy1 ) will transform to (x1 +dx2 ,y1 +dy2 ) for all values of x1 and x2.
+        """
+        dx, dy = ctypes.c_double(dx), ctypes.c_double(dy)
+        _cairo.cairo_matrix_transform_distance(self, ctypes.byref(dx), ctypes.byref(dy))
+
+        return tuple(dx.value, dy.value)
+
+    def transform_point(self, x, y):
+        """
+        Transforms the point (x , y ) by matrix.
+        """
+        x, y = ctypes.c_double(x), ctypes.c_double(y)
+        _cairo.cairo_matrix_transform_point(self, ctypes.byref(x), ctypes.byref(y))
+        return tuple(x.value, y.value)
+
+    def translate(self, tx, ty):
+        """
+        Applies a transformation by tx, ty to the transformation in Matrix. The effect of the new transformation is to first translate the coordinates by tx and ty, then apply the original transformation to the coordinates.
+        """
+        _cairo.cairo_matrix_translate(self, ctypes.c_double(tx), ctypes.c_double(ty))
+
 
 class Path:
     """
@@ -254,6 +442,171 @@ class Path:
         path = object.__new__(cls)
         path._path_t = ctypes.POINTER(cairo_path_t).from_address(address)
         return path
+
+class Pattern:
+
+    def __init__(self):
+        self._pattern_t = None
+
+    @property
+    def _as_parameter_(self):
+        return self._pattern_t
+
+    @classmethod
+    def _from_address(cls, address):
+        pattern = object.__new__(cls)
+        pattern._pattern_t = address
+        return pattern
+
+    def get_extend(self):
+        return _cairo.cairo_pattern_get_extend(self)
+
+    def get_matrix(self):
+        matrix = Matrix()
+        _cairo.cairo_pattern_get_matrix(self, matrix)
+        return matrix
+
+    def set_extend(self, extend):
+        _cairo.cairo_pattern_set_extend(self, extend)
+
+    def set_matrix(self, matrix):
+        _cairo.cairo_pattern_set_matrix(self, matrix)
+
+
+class SolidPattern(Pattern):
+
+    _cairo.cairo_pattern_create_rgba.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+    def __init__(self, red, green, blue, alpha=1.0):
+        self._pattern_t = _cairo.cairo_pattern_create_rgba(red, green, blue, alpha)
+
+    _cairo.cairo_pattern_get_rgba.argtypes = (ctypes.c_void_p, ) + tuple(ctypes.POINTER(ctypes.c_double) for i in range(4))
+    def get_rgba(self):
+        red, green, blue, alpha = (ctypes.c_double() for i in range(4))
+        _cairo.cairo_pattern_get_rgba(self, *tuple(ctypes.byref(i) for i in (red, green, blue, alpha)))
+        return tuple(i.value for i in (red, green, blue, alpha))
+
+class SurfacePattern(Pattern):
+
+    def __init__(self, surface):
+        self._pattern_t = _cairo.cairo_pattern_create_for_surface(surface)
+
+#############
+
+class FontFace:
+    """
+    A cairo.FontFace specifies all aspects of a font other than the size or font matrix (a font matrix is used to distort a font by sheering it or scaling it unequally in the two directions). A FontFace can be set on a Context by using Context.set_font_face() the size and font matrix are set with Context.set_font_size() and Context.set_font_matrix().
+
+    There are various types of FontFace, depending on the font backend they use.
+
+    This class cannot be instantiated directly, it is returned by Context.get_font_face().
+    """
+    def __init__(self):
+        self._font_face_t = None
+
+    @property
+    def _as_parameter_(self):
+        return self._font_face_t
+
+    @classmethod
+    def _from_address(cls, address):
+        font_face = object.__new__(cls)
+        font_face._font_face_t = address
+        return font_face
+
+    def status(self):
+        return _cairo.cairo_font_face_status(self._font_face_t)
+
+    def get_type(self):
+        return _cairo.cairo_font_face_get_type(self._font_face_t)
+
+    def get_reference_count(self):
+        return _cairo.cairo_font_face_get_reference_count(self._font_face_t)
+
+    def set_user_data(self):
+        pass
+
+    def get_user_data(self):
+        pass
+
+class ScaledFont:
+    """
+    A ScaledFont is a font scaled to a particular size and device resolution. A ScaledFont is most useful for low-level font usage where a library or application wants to cache a reference to a scaled font to speed up the computation of metrics.
+
+    There are various types of scaled fonts, depending on the font backend they use.
+    """
+    def __init__(self, font_face, font_matrix, ctm, font_options):
+        self._scaled_font_t = _cairo.cairo_scaled_font_create(font_face, font_matrix, ctm, font_options)
+
+    @property
+    def _as_parameter_(self):
+        return self._scaled_font_t
+
+    @classmethod
+    def _from_address(cls, address):
+        scaled_font = object.__new__(cls)
+        scaled_font._scaled_font_t = address
+        return scaled_font
+
+    def extents(self):
+        """
+        @return: (ascent, descent, height, max_x_advance, max_y_advance), a tuple of float values.
+        """
+        font_extents_t = cairo_font_extents_t()
+        _cairo.cairo_scaled_font_extents(self._scaled_font_t, ctypes.byref(font_extents_t))
+        return tuple(getattr(font_extents_t, i[0]) for i in font_extents_t._fields_)
+
+    def get_ctm(self):
+        ctm = Matrix()
+        _cairo.cairo_scaled_font_get_ctm(self, ctm)
+        return ctm
+
+    def get_font_face(self):
+        return FontFace._from_address(_cairo.cairo_scaled_font_get_font_face(self))
+
+    def get_font_matrix(self):
+        matrix = Matrix()
+        _cairo.cairo_scaled_font_get_font_matrix(self, matrix)
+        return matrix
+
+    def get_font_options(self):
+        font_options = FontOptions()
+        _cairo.cairo_scaled_font_get_font_options(self, font_options)
+        return font_options
+
+
+    def text_extents(self, text):
+        extents_t = cairo_text_extents_t()
+        text = text.encode("utf-8")
+        _cairo.cairo_scaled_font_text_extents(self._scaled_font_t, text, ctypes.byref(extents_t))
+        return tuple(getattr(extents_t, i[0]) for i in extents_t._fields_)
+
+class FontOptions:
+    """
+    An opaque structure holding all options that are used when rendering fonts.
+
+    Individual features of a FontOptions can be set or accessed using functions named FontOptions.set_<feature_name> and FontOptions.get_<feature_name>, like FontOptions.set_antialias() and FontOptions.get_antialias().
+
+    New features may be added to a FontOptions in the future. For this reason, FontOptions.copy(), FontOptions.equal(), FontOptions.merge(), and FontOptions.hash() should be used to copy, check for equality, merge, or compute a hash value of FontOptions objects.
+    """
+    def __init__(self):
+        self._font_options_t = None
+
+    @property
+    def _as_parameter_(self):
+        return self._font_options_t
+
+    @classmethod
+    def _from_address(cls, address):
+        font_options = object.__new__(cls)
+        font_options._font_options_t = address
+        return font_options
+    
+    for i in ("antialias", "hint_metrics", "hint_style", "subpixel_order"):
+        exec("get_%s = lambda self: _cairo.cairo_font_options_get_%s(self)" % (i, i))
+        exec("set_%s = lambda self, %s: _cairo.cairo_font_options_set_%s(self, %s)" % (i, i, i, i))
+
+    del i
+
 
 class Surface:
     """
@@ -948,13 +1301,91 @@ class Context:
 
     def get_font_face(self):
         """
+        @return: the current FontFace for the Context.
         """
-        pass
+        return FontFace._from_address(_cairo.cairo_get_font_face(self._cairo_t))
 
     def get_font_matrix(self):
         """
         """
         pass
+
+    def get_font_options(self):
+        """
+        """
+        font_options = FontOptions()
+        _cairo.cairo_get_font_options(self._cairo_t, font_options)
+        return font_options
+
+    def get_group_target(self):
+        """
+        @return: the target Surface.
+        Gets the current destination Surface for the Context. This is either the original target surface as passed to Context or the target surface for the current group as started by the most recent call to Context.push_group() or Context.push_group_with_content().
+
+        Origin:
+        cairo.Context.get_group_target() in pycairo
+        cairo_get_group_target() in cairo
+        """
+        return Surface._from_address(_cairo.cairo_get_group_target(self._cairo_t))
+
+    def get_line_cap(self):
+        """
+        @return: the current LINE_CAP style, as set by Context.set_line_cap()
+
+        Origin:
+        cairo.Context.get_line_cap() in pycairo
+        cairo_get_line_cap() in cairo
+        """
+        return _cairo.cairo_get_line_cap(self._cairo_t)
+
+    def get_line_join(self):
+        """
+        @return: the current LINE_JOIN style, as set by Context.set_line_join()
+
+        Origin:
+        cairo.Context.get_line_join() in pycairo
+        cairo_get_line_join() in cairo
+        """
+        return _cairo.cairo_get_line_join(self._cairo_t)
+
+    def get_line_width(self):
+        """
+        @return: the current line width
+
+        This function returns the current line width value exactly as set by Context.set_line_width(). Note that the value is unchanged even if the CTM has changed between the calls to Context.set_line_width() and get_line_width().
+
+        Origin:
+        cairo.Context.get_line_width() in pycairo
+        cairo_get_line_width() in cairo
+        """
+        return _cairo.cairo_get_line_width(self._cairo_t).value
+
+    def get_matrix(self):
+        """
+        @return: the current transformation Matrix(CTM)
+        """
+        matrix = Matrix()
+        _cairo.cairo_get_matrix(self, matrix)
+        return matrix
+
+    def get_miter_limit(self):
+        """
+        @return: the current miter limit, as set by Context.set_miter_limit().
+        """
+        return _cairo.cairo_get_miter_limit(self._cairo_t).value
+
+    def get_operator(self):
+        """
+        @return: the current compositing OPERATOR for a Context.
+        """
+        return _cairo.cairo_get_operator(self._cairo_t)
+
+    def get_scaled_font(self):
+        """
+        @return: the current ScaledFont for a Context.
+        """
+        return ScaledFont._from_address(_cairo.cairo_get_scaled_font(self._cairo_t))
+
 
     # for performance concerns?
     _cairo.cairo_move_to.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
@@ -1040,9 +1471,6 @@ class Context:
     def set_antialias(self, antialis):
         _cairo.cairo_set_antialias(self._cairo_t, antialis)
 
-    def get_antialise(self):
-        return _cairo.cairo_get_antialias(self._cairo_t)
-
     def in_fill(self, x, y):
         return True if _cairo.cairo_in_fill(self._cairo_t, x, y) == 1 else False
 
@@ -1104,4 +1532,4 @@ if __name__ == "__main__":
     c.rectangle(50, 50, 100, 100)
     c.rectangle(0, 0, 50, 50)
     c.fill()
-    #s.write_to_png(b"hello.png")
+    s.write_to_png(b"hello.png")
