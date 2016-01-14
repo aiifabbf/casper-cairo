@@ -536,7 +536,7 @@ class ImageSurface(Surface):
         b = (ctypes.c_char*len(bb)).from_buffer(bb)
         s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 100, 100, 400)
 
-        Result: Works. bb changes. No problem found.
+        Result: Works. bb changes. bb, b and s.get_data() change synchronously. No problem found.
 
         - ctypes.c_char_Array_*, byref method
 
@@ -544,7 +544,7 @@ class ImageSurface(Surface):
         b = (ctypes.c_char*len(bb)).from_buffer(bb)
         s = ImageSurface.create_for_data(ctypes.byref(b), FORMAT_ARGB32, 100, 100, 400)
 
-        Result: Works. No problem found.
+        Result: Works. bb, b and s.get_data() change synchronously. No problem found.
 
         - ctypes.c_char, byref method
 
@@ -552,7 +552,7 @@ class ImageSurface(Surface):
         b = ctypes.c_char.from_buffer(bb)
         s = ImageSurface.create_for_data(ctypes.byref(b), FORMAT_ARGB32, 100, 100, 400)
 
-        Result: Works. No problem found.
+        Result: Works. bb and s.get_data() change synchronously(b is a c_char so it does not support indexing). No problem found.
 
         I prefer the ctypes.c_char_Array_* method being inserted here to let @param data be any Python writable buffer.
         """
@@ -831,8 +831,7 @@ class Context:
         cairo.Context.curve_to() in pycairo
         cairo_curve_to() in cairo
         """
-        x1, y1, x2, y2, x3, y3 = [ctypes.c_double(i) for i in (x1, y1, x2, y2, x3, y3)]
-        _cairo.cairo_curve_to(self._cairo_t, x1, y1, x2, y2, x3, y3)
+        _cairo.cairo_curve_to(self._cairo_t, *[ctypes.c_double(i) for i in (x1, y1, x2, y2, x3, y3)])
 
     def fill(self):
         """
@@ -875,9 +874,124 @@ class Context:
         _cairo.cairo_font_extents(self._cairo_t, ctypes.byref(address))
         return struct.unpack("5d", ctypes.string_at(address, ctypes.sizeof(ctypes.c_double)*5))"""
 
+    def get_antialias(self):
+        """
+        @return int: the current ANTIALIAS mode, as set by Context.set_antialias().
+
+        Origin:
+        cairo.Context.get_antialias() in pycairo
+        cairo_get_antialias() in cairo
+        """
+        return _cairo.cairo_get_antialias(self._cairo_t)
+
+    def get_current_point(self):
+        """
+        @return (x, y)
+            x: X coordinate of the current point
+            y: Y coordinate of the current point
+
+        Gets the current point of the current path, which is conceptually the final point reached by the path so far.
+
+        The current point is returned in the user-space coordinate system. If there is no defined current point or if Context is in an error status, x and y will both be set to 0.0. It is possible to check this in advance with Context.has_current_point().
+
+        Most path construction functions alter the current point. See the following for details on how they affect the current point: Context.new_path(), Context.new_sub_path(), Context.append_path(), Context.close_path(), Context.move_to(), Context.line_to(), Context.curve_to(), Context.rel_move_to(), Context.rel_line_to(), Context.rel_curve_to(), Context.arc(), Context.arc_negative(), Context.rectangle(), Context.text_path(), Context.glyph_path(), Context.stroke_to_path().
+
+        Some functions use and alter the current point but do not otherwise change current path: Context.show_text().
+
+        Some functions unset the current path and as a result, current point: Context.fill(), Context.stroke().
+
+        Origin:
+        cairo.Context.get_current_point() in pycairo
+        cairo_get_current_point() in cairo (NOTE: in Paths section)
+        """
+        x, y = ctypes.c_double(), ctypes.c_double()
+        _cairo.cairo_get_current_point(self._cairo_t, ctypes.byref(x), ctypes.byref(y))
+        return (x.value, y.value)
+
+    def get_dash(self):
+        """
+        @return (dashes, offset)
+            dashes: return value for the dash array
+            offset: return value for the current dash offset
+
+        Gets the current dash array.
+
+        Origin:
+        cairo.Context.get_dash() in pycairo
+        cairo_get_dash() in cairo
+        """
+        dashes = (ctypes.c_double * _cairo.cairo_get_dash_count())()
+        offset = ctypes.c_double()
+        _cairo.cairo_get_dash(self._cairo_t, ctypes.byref(dashes), ctypes.byref(offset))
+        return (tuple(dashes), offset.value)
+
+    def get_dash_count(self):
+        """
+        @return int: the length of the dash array, or 0 if no dash array set.
+        See also Context.set_dash() and Context.get_dash().
+
+        Origin:
+        cairo.Context.get_dash_count() in pycairo
+        cairo_get_dash_count() in cairo
+        """
+        return _cairo.cairo_get_dash_count(self._cairo_t)
+
+    def get_fill_rule(self):
+        """
+        @return int: the current FILL RULE, as set by Context.set_fill_rule().
+
+        Origin:
+        cairo.Context.get_fill_rule() in pycairo
+        cairo_get_fill_rule() in cairo
+        """
+        return _cairo.cairo_get_fill_rule(self._cairo_t)
+
+    def get_font_face(self):
+        """
+        """
+        pass
+
+    def get_font_matrix(self):
+        """
+        """
+        pass
+
+    # for performance concerns?
+    _cairo.cairo_move_to.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
+    def move_to(self, x, y):
+        """
+        Begin a new sub-path. After this call the current point will be (x, y).
+        """
+        _cairo.cairo_move_to(self._cairo_t, x, y)
+
     def reference(self, cr):
         _cairo.cairo_reference(self._cairo_t)
         return self
+
+    def rectangle(self, x, y, width, height):
+        """
+        @param x (float): the X coordinate of the top left corner of the rectangle
+        @param y (float): the Y coordinate to the top left corner of the @paramrectangle
+        @param width (float): the width of the rectangle
+        @param height (float): the height of the rectangle
+
+        Adds a closed sub-path rectangle of the given size to the current path at position (x, y) in user-space coordinates.
+
+        This function is logically equivalent to:
+
+        ctx.move_to(x, y)
+        ctx.rel_line_to(width, 0)
+        ctx.rel_line_to(0, height)
+        ctx.rel_line_to(-width, 0)
+        ctx.close_path()
+
+        Origin:
+        cairo.Context.rectangle() in pycairo
+        cairo_rectangle in cairo
+        """
+        #x, y, width, height = tuple(ctypes.c_double(i) for i in (x, y, width, height))
+        #_cairo.cairo_rectangle.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+        _cairo.cairo_rectangle(self._cairo_t, *tuple(ctypes.c_double(i) for i in (x, y, width, height)))
 
     def destroy(self):
         pass
@@ -916,7 +1030,7 @@ class Context:
         _cairo.cairo_set_source(self._cairo_t, source._pattern_t)
 
     def set_source_surface(self, surface, x, y):
-        _cairo.cairo_set_source_surface(self._cairo_t, surface._surface_t, x, y)
+        _cairo.cairo_set_source_surface(self._cairo_t, surface._surface_t, ctypes.c_double(x), ctypes.c_double(y))
 
     def get_source(self):
         pattern = Pattern()
@@ -980,9 +1094,14 @@ if __name__ == "__main__":
     a = s._from_address(s._surface_t)
     """
     bb = bytearray(40000)
-    b = (ctypes.c_char*len(bb)).from_buffer(bb)
-    s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 100, 100, 400)
+    #b = (ctypes.c_char*len(bb)).from_buffer(bb)
+    b = (ctypes.c_char).from_buffer(bb)
+    s = ImageSurface.create_for_data(ctypes.byref(b), FORMAT_ARGB32, 100, 100, 400)
     c = Context(s)
-    c.set_source_rgb(1, 1, 1)
+    c.set_source_rgb(0, 0, 0)
     c.paint()
-
+    c.set_source_rgb(1, 1, 1)
+    c.rectangle(50, 50, 100, 100)
+    c.rectangle(0, 0, 50, 50)
+    c.fill()
+    #s.write_to_png(b"hello.png")
