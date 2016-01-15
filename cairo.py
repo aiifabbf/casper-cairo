@@ -511,7 +511,7 @@ class SurfacePattern(Pattern):
 
 class Gradient(Pattern):
 
-    _cairo.cairo_pattern_add_color_stop_rgb.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+    _cairo.cairo_pattern_add_color_stop_rgb.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
     def add_color_stop_rgb(self, offset, red, green, blue):
         _cairo.cairo_pattern_add_color_stop_rgb(self, offset, red, green, blue)
 
@@ -521,7 +521,7 @@ class Gradient(Pattern):
 
 class LinearGradient(Gradient):
 
-    _cairo.cairo_pattern_create_linear.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, )
+    _cairo.cairo_pattern_create_linear.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, )
     def __init__(self, x0, y0, x1, y1):
         self._pattern_t = _cairo.cairo_pattern_create_linear(x0, y0, x1, y1)
 
@@ -532,7 +532,7 @@ class LinearGradient(Gradient):
 
 class RadialGradient(Gradient):
 
-    _cairo.cairo_pattern_create_radial.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, )
+    _cairo.cairo_pattern_create_radial.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, )
     def __init__(self, cx0, cy0, radius0, cx1, cy1, radius1):
         self._pattern_t = _cairo.cairo_pattern_create_radial(cx0, cy0, radius0, cx1, cy1, radius1)
 
