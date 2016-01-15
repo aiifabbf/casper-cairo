@@ -222,6 +222,14 @@ FONT_TYPE_WIN32 = 2
 FONT_TYPE_QUARTZ = 3
 FONT_TYPE_USER = 4
 
+# cairo_pattern_type_t
+PATTERN_TYPE_SOLID = 0
+PATTERN_TYPE_SURFACE = 1
+PATTERN_TYPE_LINEAR = 2
+PATTERN_TYPE_RADIAL = 3
+PATTERN_TYPE_MESH = 4
+PATTERN_TYPE_RASTER_SOURC = 5
+
 class cairo_rectangle_t(ctypes.Structure):
     _fields_ = [
     ("x", ctypes.c_double), 
@@ -248,6 +256,7 @@ union _cairo_path_data_t {
 };
 """
 
+# I write only those Structures that are essential to my implementing all the functionalities.
 class cairo_path_data_t(ctypes.Union):
 
     class header(ctypes.Structure):
@@ -423,7 +432,6 @@ class Matrix:
         """
         _cairo.cairo_matrix_translate(self, ctypes.c_double(tx), ctypes.c_double(ty))
 
-
 class Path:
     """
     Path cannot be instantiated directly, it is created by calling Context.copy_path() and Context.copy_path_flat().
@@ -454,7 +462,7 @@ class Pattern:
 
     @classmethod
     def _from_address(cls, address):
-        pattern = object.__new__(cls)
+        pattern = object.__new__(_pattern_types[_cairo.cairo_pattern_get_type(address)])
         pattern._pattern_t = address
         return pattern
 
@@ -472,6 +480,12 @@ class Pattern:
     def set_matrix(self, matrix):
         _cairo.cairo_pattern_set_matrix(self, matrix)
 
+    # Conflict: I didn't see any type requirement for gettting and setting filter for patterns in original cairo C lib but getting and setting filter are restricted to SurfacePattern objects in pycairo.
+    def get_filter(self):
+        return _cairo.cairo_pattern_get_filter(self)
+
+    def set_filter(self, filter):
+        _cairo.cairo_pattern_set_filter(self, filter)
 
 class SolidPattern(Pattern):
 
@@ -489,6 +503,44 @@ class SurfacePattern(Pattern):
 
     def __init__(self, surface):
         self._pattern_t = _cairo.cairo_pattern_create_for_surface(surface)
+
+    def get_surface(self):
+        surface = ctypes.pointer(ctypes.c_void_p())
+        _cairo.cairo_pattern_get_surface(self, surface)
+        return Surface._from_address(surface.contents.value)
+
+class Gradient(Pattern):
+
+    _cairo.cairo_pattern_add_color_stop_rgb.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+    def add_color_stop_rgb(self, offset, red, green, blue):
+        _cairo.cairo_pattern_add_color_stop_rgb(self, offset, red, green, blue)
+
+    _cairo.cairo_pattern_add_color_stop_rgb.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+    def add_color_stop_rgba(self, offset, red, green, blue, alpha):
+        _cairo.cairo_pattern_add_color_stop_rgba(self, offset, red, green, blue, alpha)
+
+class LinearGradient(Gradient):
+
+    _cairo.cairo_pattern_create_linear.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, )
+    def __init__(self, x0, y0, x1, y1):
+        self._pattern_t = _cairo.cairo_pattern_create_linear(x0, y0, x1, y1)
+
+    def get_linear_points(self):
+        x0, y0, x1, y1 = tuple(ctypes.c_double() for i in range(4))
+        _cairo.cairo_pattern_get_linear_points(self, *tuple(ctypes.byref(i) for i in (x0, y0, x1, y1)))
+        return tuple(i.value for i in (x0, y0, x1, y1))
+
+class RadialGradient(Gradient):
+
+    _cairo.cairo_pattern_create_radial.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, )
+    def __init__(self, cx0, cy0, radius0, cx1, cy1, radius1):
+        self._pattern_t = _cairo.cairo_pattern_create_radial(cx0, cy0, radius0, cx1, cy1, radius1)
+
+    def get_radial_circles(self):
+        x0, y0, r0, x1, y1, r1 = tuple(ctypes.c_double() for i in range(6))
+        _cairo.cairo_pattern_get_linear_points(self, *tuple(ctypes.byref(i) for i in (x0, y0, r0, x1, y1, r1)))
+        return tuple(i.value for i in (x0, y0, r0, x1, y1, r1))
+
 
 #############
 
@@ -654,8 +706,6 @@ class Surface:
         @param height: height of the new surface (in device-space units)
         @return: a newly allocated Surface
         Create a Surface that is as compatible as possible with the existing surface. For example the new surface will have the same fallback resolution and FontOptions. Generally, the new surface will also use the same backend, unless that is not possible for some reason.
-
-        *content is one of 
 
         Origin:
         cairo.Surface.create_similar() in pycairo
@@ -1307,8 +1357,16 @@ class Context:
 
     def get_font_matrix(self):
         """
+        @return: a Matrix object
+        Stores the current font matrix into matrix. See cairo.Context.set_font_matrix().
+
+        Origin:
+        cairo.Context.get_font_matrix() in pycairo
+        cairo_get_font_matrix() in cairo
         """
-        pass
+        matrix = Matrix()
+        _cairo.cairo_get_font_matrix(self, matrix)
+        return matrix
 
     def get_font_options(self):
         """
@@ -1386,6 +1444,66 @@ class Context:
         """
         return ScaledFont._from_address(_cairo.cairo_get_scaled_font(self._cairo_t))
 
+    def get_source(self):
+        """
+        """
+        return Pattern._from_address(_cairo.cairo_get_source(self._cairo_t))
+
+    def get_target(self):
+        return Surface._from_address(_cairo.cairo_get_target(self._cairo_t))
+
+    _cairo.cairo_get_tolerance.restype = ctypes.c_double
+    def get_tolerance(self):
+        return _cairo.cairo_get_tolerance(self._cairo_t)
+
+    def reference(self, cr):
+        _cairo.cairo_reference(self._cairo_t)
+        return self
+
+    def destroy(self):
+        pass
+
+    def status(self):
+        return _cairo.cairo_status(self._cairo_t)
+
+    def save(self):
+        _cairo.cairo_save(self._cairo_t)
+
+    def restore(self):
+        _cairo.cairo_restore(self._cairo_t)
+
+    def set_source_rgb(self, red, green, blue):
+        _cairo.cairo_set_source_rgb(self._cairo_t, ctypes.c_double(red), ctypes.c_double(green), ctypes.c_double(blue))
+
+    def set_source_rgba(self, red, green, blue, alpha):
+        _cairo.cairo_set_source_rgba(self._cairo_t, ctypes.c_double(red), ctypes.c_double(green), ctypes.c_double(blue), ctypes.c_double(alpha))
+
+    def set_source(self, source):
+        _cairo.cairo_set_source(self._cairo_t, source._pattern_t)
+
+    def set_source_surface(self, surface, x, y):
+        _cairo.cairo_set_source_surface(self._cairo_t, surface._surface_t, ctypes.c_double(x), ctypes.c_double(y))
+
+    def set_antialias(self, antialis):
+        _cairo.cairo_set_antialias(self._cairo_t, antialis)
+
+    _cairo.cairo_in_fill.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
+    def in_fill(self, x, y):
+        return True if _cairo.cairo_in_fill(self._cairo_t, x, y) else False
+
+    _cairo.cairo_in_fill.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
+    def in_stroke(self, x, y):
+        return True if _cairo.cairo_in_stroke(self._cairo_t, x, y) else False
+
+    _cairo.cairo_line_to.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
+    def line_to(self, x, y):
+        _cairo.cairo_line_to(self._cairo_t, x, y)
+
+    def mask(self, pattern):
+        _cairo.cairo_mask(self._cairo_t, pattern._pattern_t)
+
+    def mask_surface(self, surface, x=0.0, y=0.0):
+        _cairo.cairo_mask_surface(self._cairo_t, surface, ctypes.c_double(x), ctypes.c_double(y))
 
     # for performance concerns?
     _cairo.cairo_move_to.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
@@ -1395,9 +1513,23 @@ class Context:
         """
         _cairo.cairo_move_to(self._cairo_t, x, y)
 
-    def reference(self, cr):
-        _cairo.cairo_reference(self._cairo_t)
-        return self
+    def paint(self):
+        _cairo.cairo_paint(self._cairo_t)
+
+    def paint_with_alpha(self, alpha):
+        _cairo.cairo_paint_with_alpha(self._cairo_t, ctypes.c_double(alpha))
+
+    def push_group(self):
+        pass
+
+    def push_group_to_source(self):
+        pass
+
+    def pop_group(self):
+        pass
+
+    def pop_group_to_source(self):
+        pass
 
     def rectangle(self, x, y, width, height):
         """
@@ -1423,66 +1555,6 @@ class Context:
         #x, y, width, height = tuple(ctypes.c_double(i) for i in (x, y, width, height))
         #_cairo.cairo_rectangle.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
         _cairo.cairo_rectangle(self._cairo_t, *tuple(ctypes.c_double(i) for i in (x, y, width, height)))
-
-    def destroy(self):
-        pass
-
-    def status(self):
-        return _cairo.cairo_status(self._cairo_t)
-
-    def save(self):
-        _cairo.cairo_save(self._cairo_t)
-
-    def restore(self):
-        _cairo.cairo_restore(self._cairo_t)
-
-    def get_target(self):
-        return self.target
-
-    def push_group(self):
-        pass
-
-    def push_group_to_source(self):
-        pass
-
-    def pop_group(self):
-        pass
-
-    def pop_group_to_source(self):
-        pass
-
-    def set_source_rgb(self, red, green, blue):
-        _cairo.cairo_set_source_rgb(self._cairo_t, ctypes.c_double(red), ctypes.c_double(green), ctypes.c_double(blue))
-
-    def set_source_rgba(self, red, green, blue, alpha):
-        _cairo.cairo_set_source_rgba(self._cairo_t, ctypes.c_double(red), ctypes.c_double(green), ctypes.c_double(blue), ctypes.c_double(alpha))
-
-    def set_source(self, source):
-        _cairo.cairo_set_source(self._cairo_t, source._pattern_t)
-
-    def set_source_surface(self, surface, x, y):
-        _cairo.cairo_set_source_surface(self._cairo_t, surface._surface_t, ctypes.c_double(x), ctypes.c_double(y))
-
-    def get_source(self):
-        pattern = Pattern()
-        pattern._pattern_t = _cairo.cairo_get_source(self._cairo_t)
-        return pattern
-
-    def set_antialias(self, antialis):
-        _cairo.cairo_set_antialias(self._cairo_t, antialis)
-
-    def in_fill(self, x, y):
-        return True if _cairo.cairo_in_fill(self._cairo_t, x, y) == 1 else False
-
-    def mask(self, pattern):
-        _cairo.cairo_mask(self._cairo_t, pattern._pattern_t)
-
-    def paint(self):
-        _cairo.cairo_paint(self._cairo_t)
-
-    def paint_with_alpha(self, alpha):
-        _cairo.cairo_paint_with_alpha(self._cairo_t, ctypes.c_double(alpha))
-
 
 _surface_types = {
     SURFACE_TYPE_IMAGE: ImageSurface,
@@ -1512,6 +1584,15 @@ _surface_types = {
     SURFACE_TYPE_COGL: None,
 }
 
+_pattern_types = {
+    PATTERN_TYPE_SOLID: SolidPattern,
+    PATTERN_TYPE_SURFACE: SurfacePattern,
+    PATTERN_TYPE_LINEAR: LinearGradient,
+    PATTERN_TYPE_RADIAL: RadialGradient,
+    PATTERN_TYPE_MESH: None,
+    PATTERN_TYPE_RASTER_SOURC: None,
+}
+
 if __name__ == "__main__":
     # testing
     """
@@ -1521,10 +1602,11 @@ if __name__ == "__main__":
     c.paint()
     a = s._from_address(s._surface_t)
     """
-    bb = bytearray(40000)
+    bb = bytearray(100*100*4)
     #b = (ctypes.c_char*len(bb)).from_buffer(bb)
-    b = (ctypes.c_char).from_buffer(bb)
-    s = ImageSurface.create_for_data(ctypes.byref(b), FORMAT_ARGB32, 100, 100, 400)
+    b = (ctypes.c_char*len(bb)).from_buffer(bb)
+    #b = ctypes.cast(b, ctypes.POINTER(ctypes.c_int))
+    s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 100, 100, 400)
     c = Context(s)
     c.set_source_rgb(0, 0, 0)
     c.paint()
