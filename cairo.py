@@ -511,11 +511,11 @@ class SurfacePattern(Pattern):
 
 class Gradient(Pattern):
 
-    _cairo.cairo_pattern_add_color_stop_rgb.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+    _cairo.cairo_pattern_add_color_stop_rgb.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
     def add_color_stop_rgb(self, offset, red, green, blue):
         _cairo.cairo_pattern_add_color_stop_rgb(self, offset, red, green, blue)
 
-    _cairo.cairo_pattern_add_color_stop_rgb.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+    _cairo.cairo_pattern_add_color_stop_rgba.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
     def add_color_stop_rgba(self, offset, red, green, blue, alpha):
         _cairo.cairo_pattern_add_color_stop_rgba(self, offset, red, green, blue, alpha)
 
@@ -1602,16 +1602,23 @@ if __name__ == "__main__":
     c.paint()
     a = s._from_address(s._surface_t)
     """
+    ""
     bb = bytearray(100*100*4)
     #b = (ctypes.c_char*len(bb)).from_buffer(bb)
     b = (ctypes.c_char*len(bb)).from_buffer(bb)
     #b = ctypes.cast(b, ctypes.POINTER(ctypes.c_int))
     s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 100, 100, 400)
     c = Context(s)
-    c.set_source_rgb(0, 0, 0)
-    c.paint()
     c.set_source_rgb(1, 1, 1)
-    c.rectangle(50, 50, 100, 100)
-    c.rectangle(0, 0, 50, 50)
-    c.fill()
+    c.paint()
+    linear = LinearGradient(0, 0, 100, 100)
+    linear.add_color_stop_rgb(0, 0, 0.3, 0.8)
+    linear.add_color_stop_rgb(1, 0, 0.8, 0.3)
+
+    radial = RadialGradient(50, 50, 25, 50, 50, 75)
+    radial.add_color_stop_rgba(0, 0, 0, 0, 1)
+    radial.add_color_stop_rgba(0.5, 0, 0, 0, 0)
+
+    c.set_source(linear)
+    c.mask(radial)
     s.write_to_png(b"hello.png")
