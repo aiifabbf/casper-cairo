@@ -222,6 +222,15 @@ FONT_TYPE_WIN32 = 2
 FONT_TYPE_QUARTZ = 3
 FONT_TYPE_USER = 4
 
+# cairo_font_slant_t
+FONT_SLANT_NORMAL = 0
+FONT_SLANT_ITALIC = 1
+FONT_SLANT_OBLIQUE = 2
+
+# cairo_font_weight_t
+FONT_WEIGHT_NORMAL = 0
+FONT_WEIGHT_BOLD = 1
+
 # cairo_pattern_type_t
 PATTERN_TYPE_SOLID = 0
 PATTERN_TYPE_SURFACE = 1
@@ -269,6 +278,10 @@ class cairo_path_data_t(ctypes.Union):
         ("x", ctypes.c_double), 
         ("y", ctypes.c_double)]
 
+    _fields_ = [
+    ("header", header),
+    ("point", point)]
+
 class cairo_path_t(ctypes.Structure):
     _fields_ = [
     ("status", ctypes.c_int), 
@@ -300,6 +313,12 @@ class cairo_matrix_t(ctypes.Structure):
     ("yy", ctypes.c_double),
     ("x0", ctypes.c_double),
     ("y0", ctypes.c_double)]
+
+class cairo_glyph_t(ctypes.Structure):
+    _fields_ = [
+    ("index", ctypes.c_ulong),
+    ("x", ctypes.c_double),
+    ("y", ctypes.c_double)]
 
 class Error(Exception): 
     """
@@ -448,7 +467,7 @@ class Path:
     @classmethod
     def _from_address(cls, address):
         path = object.__new__(cls)
-        path._path_t = ctypes.POINTER(cairo_path_t).from_address(address)
+        path._path_t = ctypes.pointer(cairo_path_t.from_address(address))
         return path
 
 class Pattern:
@@ -624,7 +643,6 @@ class ScaledFont:
         font_options = FontOptions()
         _cairo.cairo_scaled_font_get_font_options(self, font_options)
         return font_options
-
 
     def text_extents(self, text):
         extents_t = cairo_text_extents_t()
@@ -999,7 +1017,7 @@ class ImageSurface(Surface):
         A call to cairo_surface_flush() is required before accessing the pixel data to ensure that all pending drawing operations are finished. A call to cairo_surface_mark_dirty() is required after the data is modified.
 
         Origin:
-        cairo.ImageSurface.get_data() in pycairo (yet not available, in docs, while available in the LATEST release)
+        cairo.ImageSurface.get_data() in pycairo (yet not available, in docs, while available in the LATEST release, returning a memoryview object)
         cairo_image_surface_get_data() in cairo
         """
         ## Still thinking about how to return a memoryview object which is more pythonic, though c_char_Array_* itself supports nearly everything a memoryview has.
@@ -1051,6 +1069,7 @@ class Context:
         """
         _cairo.cairo_append_path(path._path_t)
 
+    _cairo.cairo_arc.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
     def arc(self, xc, yc, radius, angle1, angle2):
         """
         @param xc (float): X position of the center of the arc
@@ -1082,8 +1101,9 @@ class Context:
         cairo.Context.arc() in pycairo
         cairo_arc() in cairo
         """
-        _cairo.cairo_arc(*[ctypes.c_double(i) for i in (xc, yc, radius, angle1, angle2)])
+        _cairo.cairo_arc(xc, yc, radius, angle1, angle2)
 
+    _cairo.cairo_arc_negative.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
     def arc_negative(self, xc, yc, radius, angle1, angle2):
         """
         Adds a circular arc of the given radius to the current path. The arc is centered at (xc, yc), begins at angle1 and proceeds in the direction of decreasing angles to end at angle2. If angle2 is greater than angle1 it will be progressively decreased by 2*PI until it is less than angle1.
@@ -1094,7 +1114,7 @@ class Context:
         cairo.Context.arc_negative() in pycairo
         cairo_arc_negative() in cairo
         """
-        _cairo.cairo_arc(*[ctypes.c_double(i) for i in (xc, yc, radius, angle1, angle2)])
+        _cairo.cairo_arc(xc, yc, radius, angle1, angle2)
 
     def clip(self):
         """
@@ -1234,7 +1254,40 @@ class Context:
         cairo.Context.curve_to() in pycairo
         cairo_curve_to() in cairo
         """
-        _cairo.cairo_curve_to(self._cairo_t, *[ctypes.c_double(i) for i in (x1, y1, x2, y2, x3, y3)])
+        _cairo.cairo_curve_to(self._cairo_t, *[ctypes.c_double.from_param(i) for i in (x1, y1, x2, y2, x3, y3)])
+        
+    def destroy(self):
+        pass
+
+    def device_to_user(self, x, y):
+        """
+        @param x (float): X value of coordinate
+        @param y (float): Y value of coordinate
+        @return: (float, float)
+        Transform a coordinate from device space to user space by multiplying the given point by the inverse of the current transformation matrix (CTM).
+
+        Origin:
+        cairo.device_to_user() in pycairo
+        cairo_device_to_user() in cairo
+        """
+        x, y = ctypes.c_double(), ctypes.c_double()
+        _cairo.cairo_device_to_user(self._cairo_t, ctypes.byref(x), ctypes.byref(y))
+        return x.value, y.value
+
+    def device_to_user_distance(self, dx, dy):
+        """
+        @param dx (float): X component of a distance vector
+        @param dy (float):Y component of a distance vector
+        @return: (float, float)
+        Transform a distance vector from device space to user space. This function is similar to Context.device_to_user() except that the translation components of the inverse CTM will be ignored when transforming (dx,dy).
+
+        Origin:
+        cairo.device_to_user_distance() in pycairo
+        cairo_device_to_user_distance() in cairo
+        """
+        dx, dy = ctypes.c_double(), ctypes.c_double()
+        _cairo.cairo_device_to_user(self._cairo_t, ctypes.byref(dx), ctypes.byref(dy))
+        return dx.value, dy.value
 
     def fill(self):
         """
@@ -1254,8 +1307,8 @@ class Context:
 
         See Context.fill(), Context.set_fill_rule() and Context.fill_preserve().
         """
-        x1, y1, x2, y2 = [ctypes.c_double() for i in range(4)]
-        _cairo.cairo_fill_extents(self._cairo_t, *[ctypes.byref(i) for i in (x1, y1, x2, y2)])
+        x1, y1, x2, y2 = (ctypes.c_double() for i in range(4))
+        _cairo.cairo_fill_extents(self._cairo_t, *(ctypes.byref(i) for i in (x1, y1, x2, y2)))
         return tuple(i.value for i in (x1, y1, x2, y2))
 
     def fill_preserve(self):
@@ -1323,7 +1376,7 @@ class Context:
         cairo.Context.get_dash() in pycairo
         cairo_get_dash() in cairo
         """
-        dashes = (ctypes.c_double * _cairo.cairo_get_dash_count())()
+        dashes = (ctypes.c_double * _cairo.cairo_get_dash_count(self._cairo_t))()
         offset = ctypes.c_double()
         _cairo.cairo_get_dash(self._cairo_t, ctypes.byref(dashes), ctypes.byref(offset))
         return (tuple(dashes), offset.value)
@@ -1406,6 +1459,7 @@ class Context:
         """
         return _cairo.cairo_get_line_join(self._cairo_t)
 
+    _cairo.cairo_get_line_width.restype = ctypes.c_double
     def get_line_width(self):
         """
         @return: the current line width
@@ -1416,7 +1470,7 @@ class Context:
         cairo.Context.get_line_width() in pycairo
         cairo_get_line_width() in cairo
         """
-        return _cairo.cairo_get_line_width(self._cairo_t).value
+        return _cairo.cairo_get_line_width(self._cairo_t)
 
     def get_matrix(self):
         """
@@ -1446,46 +1500,31 @@ class Context:
 
     def get_source(self):
         """
+        @return: the current source Pattern for a Context.
         """
         return Pattern._from_address(_cairo.cairo_get_source(self._cairo_t))
 
     def get_target(self):
+        """
+        @return: the target Surface for the Context.
+        """
         return Surface._from_address(_cairo.cairo_get_target(self._cairo_t))
 
     _cairo.cairo_get_tolerance.restype = ctypes.c_double
     def get_tolerance(self):
+        """
+        @return: the current tolerance value, as set by Context.set_tolerance().
+        """
         return _cairo.cairo_get_tolerance(self._cairo_t)
 
-    def reference(self, cr):
-        _cairo.cairo_reference(self._cairo_t)
-        return self
-
-    def destroy(self):
+    def glyph_extents(self, glyphs, num_glyphs=-1):
         pass
 
-    def status(self):
-        return _cairo.cairo_status(self._cairo_t)
-
-    def save(self):
-        _cairo.cairo_save(self._cairo_t)
-
-    def restore(self):
-        _cairo.cairo_restore(self._cairo_t)
-
-    def set_source_rgb(self, red, green, blue):
-        _cairo.cairo_set_source_rgb(self._cairo_t, ctypes.c_double(red), ctypes.c_double(green), ctypes.c_double(blue))
-
-    def set_source_rgba(self, red, green, blue, alpha):
-        _cairo.cairo_set_source_rgba(self._cairo_t, ctypes.c_double(red), ctypes.c_double(green), ctypes.c_double(blue), ctypes.c_double(alpha))
-
-    def set_source(self, source):
-        _cairo.cairo_set_source(self._cairo_t, source._pattern_t)
-
-    def set_source_surface(self, surface, x, y):
-        _cairo.cairo_set_source_surface(self._cairo_t, surface._surface_t, ctypes.c_double(x), ctypes.c_double(y))
-
-    def set_antialias(self, antialis):
-        _cairo.cairo_set_antialias(self._cairo_t, antialis)
+    def has_current_point(self):
+        """
+        Returns whether a current point is defined on the current path. See cairo_get_current_point() for details on the current point.
+        """
+        return True if _cairo.cairo_has_current_point(self) else False
 
     _cairo.cairo_in_fill.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
     def in_fill(self, x, y):
@@ -1497,13 +1536,24 @@ class Context:
 
     _cairo.cairo_line_to.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
     def line_to(self, x, y):
+        """
+        Adds a line to the path from the current point to position (x, y) in user-space coordinates. After this call the current point will be (x, y).
+
+        If there is no current point before the call to line_to() this function will behave as ctx.move_to(x, y).
+        """
         _cairo.cairo_line_to(self._cairo_t, x, y)
 
     def mask(self, pattern):
+        """
+        A drawing operator that paints the current source using the alpha channel of pattern as a mask. (Opaque areas of pattern are painted with the source, transparent areas are not painted.)
+        """
         _cairo.cairo_mask(self._cairo_t, pattern._pattern_t)
 
     def mask_surface(self, surface, x=0.0, y=0.0):
-        _cairo.cairo_mask_surface(self._cairo_t, surface, ctypes.c_double(x), ctypes.c_double(y))
+        """
+        A drawing operator that paints the current source using the alpha channel of surface as a mask. (Opaque areas of surface are painted with the source, transparent areas are not painted.)
+        """
+        _cairo.cairo_mask_surface(self._cairo_t, surface, ctypes.c_double.from_param(x), ctypes.c_double.from_param(y))
 
     # for performance concerns?
     _cairo.cairo_move_to.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
@@ -1513,24 +1563,114 @@ class Context:
         """
         _cairo.cairo_move_to(self._cairo_t, x, y)
 
+    def reference(self, cr):
+        _cairo.cairo_reference(self._cairo_t)
+        return self
+
+    def new_path(self):
+        """
+        Clears the current path. After this call there will be no path and no current point.
+        """
+        _cairo.cairo_new_path(self._cairo_t)
+
+    def new_sub_path(self):
+        """
+        Begin a new sub-path. Note that the existing path is not affected. After this call there will be no current point.
+
+        In many cases, this call is not needed since new sub-paths are frequently started with Context.move_to().
+
+        A call to new_sub_path() is particularly useful when beginning a new sub-path with one of the Context.arc() calls. This makes things easier as it is no longer necessary to manually compute the arc’s initial coordinates for a call to Context.move_to().
+        """
+        _cairo.cairo_new_sub_path(self._cairo_t)
+
     def paint(self):
+        """
+        A drawing operator that paints the current source everywhere within the current clip region.
+        """
         _cairo.cairo_paint(self._cairo_t)
 
     def paint_with_alpha(self, alpha):
-        _cairo.cairo_paint_with_alpha(self._cairo_t, ctypes.c_double(alpha))
+        """
+        @param alpha (float): alpha value, between 0 (transparent) and 1 (opaque)
+        A drawing operator that paints the current source everywhere within the current clip region using a mask of constant alpha value alpha. The effect is similar to Context.paint(), but the drawing is faded out using the alpha value.
+        """
+        _cairo.cairo_paint_with_alpha(self._cairo_t, ctypes.c_double.from_param(alpha))
 
-    def push_group(self):
-        pass
+    def path_extents(self):
+        """
+        @param x1 (float): left of the resulting extents
+        @param y1 (float): top of the resulting extents
+        @param x2 (float): right of the resulting extents
+        @param y2 (float): bottom of the resulting extents
+        Computes a bounding box in user-space coordinates covering the points on the current path. If the current path is empty, returns an empty rectangle (0, 0, 0, 0). Stroke parameters, fill rule, surface dimensions and clipping are not taken into account.
 
-    def push_group_to_source(self):
-        pass
+        Contrast with Context.fill_extents() and Context.stroke_extents() which return the extents of only the area that would be “inked” by the corresponding drawing operations.
+
+        The result of path_extents() is defined as equivalent to the limit of Context.stroke_extents() with cairo.LINE_CAP_ROUND as the line width approaches 0.0, (but never reaching the empty-rectangle returned by Context.stroke_extents() for a line width of 0.0).
+
+        Specifically, this means that zero-area sub-paths such as Context.move_to(); Context.line_to() segments, (even degenerate cases where the coordinates to both calls are identical), will be considered as contributing to the extents. However, a lone Context.move_to() will not contribute to the results of Context.path_extents().
+        """
+        x1, y1, x2, y2 = (ctypes.c_double() for i in range(4))
+        _cairo.cairo_path_extents(self, *(ctypes.byref(i) for i in (x1, y1, x2, y2)))
+        return tuple(i.value for i in (x1, y1, x2, y2))
 
     def pop_group(self):
-        pass
+        """
+        Terminates the redirection begun by a call to Context.push_group() or Context.push_group_with_content() and returns a new pattern containing the results of all drawing operations performed to the group.
+
+        The pop_group() function calls Context.restore(), (balancing a call to Context.save() by the Context.push_group() function), so that any changes to the graphics state will not be visible outside the group.
+        """
+        return SurfacePattern._from_address(_cairo.cairo_pop_group(self))
 
     def pop_group_to_source(self):
-        pass
+        """
+        Terminates the redirection begun by a call to Context.push_group() or Context.push_group_with_content() and installs the resulting pattern as the source Pattern in the given Context.
 
+        The behavior of this function is equivalent to the sequence of operations:
+
+        group = cairo_pop_group()
+        ctx.set_source(group)
+
+        but is more convenient as their is no need for a variable to store the short-lived pointer to the pattern.
+
+        The Context.pop_group() function calls Context.restore(), (balancing a call to Context.save() by the Context.push_group() function), so that any changes to the graphics state will not be visible outside the group.
+        """
+        _cairo.cairo_pop_group_to_source(self._cairo_t)
+
+    def push_group(self):
+        """
+        Temporarily redirects drawing to an intermediate surface known as a group. The redirection lasts until the group is completed by a call to Context.pop_group() or Context.pop_group_to_source(). These calls provide the result of any drawing to the group as a pattern, (either as an explicit object, or set as the source pattern).
+
+        This group functionality can be convenient for performing intermediate compositing. One common use of a group is to render objects as opaque within the group, (so that they occlude each other), and then blend the result with translucence onto the destination.
+
+        Groups can be nested arbitrarily deep by making balanced calls to Context.push_group()/Context.pop_group(). Each call pushes/pops the new target group onto/from a stack.
+
+        The push_group() function calls Context.save() so that any changes to the graphics state will not be visible outside the group, (the pop_group functions call Context.restore()).
+
+        By default the intermediate group will have a CONTENT type of cairo.CONTENT_COLOR_ALPHA. Other content types can be chosen for the group by using Context.push_group_with_content() instead.
+
+        As an example, here is how one might fill and stroke a path with translucence, but without any portion of the fill being visible under the stroke:
+
+        ctx.push_group()
+        ctx.set_source(fill_pattern)
+        ctx.fill_preserve()
+        ctx.set_source(stroke_pattern)
+        ctx.stroke()
+        ctx.pop_group_to_source()
+        ctx.paint_with_alpha(alpha)
+        """
+        _cairo.cairo_push_group(self)
+
+    def push_group_with_content(self, content):
+        """
+        @param content: a CONTENT indicating the type of group that will be created
+        Temporarily redirects drawing to an intermediate surface known as a group. The redirection lasts until the group is completed by a call to Context.pop_group() or Context.pop_group_to_source(). These calls provide the result of any drawing to the group as a pattern, (either as an explicit object, or set as the source pattern).
+
+        The group will have a content type of content. The ability to control this content type is the only distinction between this function and Context.push_group() which you should see for a more detailed description of group rendering.
+        """
+        _cairo.cairo_push_group_with_content(self, content)
+
+    _cairo.cairo_rectangle.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
     def rectangle(self, x, y, width, height):
         """
         @param x (float): the X coordinate of the top left corner of the rectangle
@@ -1554,7 +1694,423 @@ class Context:
         """
         #x, y, width, height = tuple(ctypes.c_double(i) for i in (x, y, width, height))
         #_cairo.cairo_rectangle.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
-        _cairo.cairo_rectangle(self._cairo_t, *tuple(ctypes.c_double(i) for i in (x, y, width, height)))
+        _cairo.cairo_rectangle(self._cairo_t, x, y, width, height)
+
+    _cairo.cairo_rel_curve_to.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, )
+    def rel_curve_to(self, dx1, dy1, dx2, dy2, dx3, dy3):
+        """
+        Relative-coordinate version of Context.curve_to(). All offsets are relative to the current point. Adds a cubic Bézier spline to the path from the current point to a point offset from the current point by (dx3, dy3), using points offset by (dx1, dy1) and (dx2, dy2) as the control points. After this call the current point will be offset by (dx3, dy3).
+
+        Given a current point of (x, y), ctx.rel_curve_to(dx1, dy1, dx2, dy2, dx3, dy3) is logically equivalent to ctx.curve_to(x+dx1, y+dy1, x+dx2, y+dy2, x+dx3, y+dy3).
+        """
+        _cairo.cairo_rel_curve_to(self, dx1, dy1, dx2, dy2, dx3, dy3)
+
+    _cairo.cairo_rel_move_to.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
+    def rel_move_to(self, dx, dy):
+        """
+        Begin a new sub-path. After this call the current point will offset by (dx, dy).
+
+        Given a current point of (x, y), ctx.rel_move_to(dx, dy) is logically equivalent to ctx.(x + dx, y + dy).
+        """
+        _cairo.cairo_rel_move_to(self, dx, dy)
+
+    def reset_clip(self):
+        """
+        Reset the current clip region to its original, unrestricted state. That is, set the clip region to an infinitely large shape containing the target surface. Equivalently, if infinity is too hard to grasp, one can imagine the clip region being reset to the exact bounds of the target surface.
+
+        Note that code meant to be reusable should not call reset_clip() as it will cause results unexpected by higher-level code which calls clip(). Consider using save() and restore() around clip() as a more robust means of temporarily restricting the clip region.
+        """
+        _cairo.cairo_reset_clip(self._cairo_t)
+
+    def restore(self):
+        """
+        Restores Context to the state saved by a preceding call to save() and removes that state from the stack of saved states.
+        """
+        _cairo.cairo_restore(self._cairo_t)
+
+    _cairo.cairo_rotate.argtypes = (ctypes.c_void_p, ctypes.c_double)
+    def rotate(self, angle):
+        """
+        Modifies the current transformation matrix (CTM) by rotating the user-space axes by angle radians. The rotation of the axes takes places after any existing transformation of user space. The rotation direction for positive angles is from the positive X axis toward the positive Y axis.
+        """
+        _cairo.cairo_rotate(self, angle)
+
+    def save(self):
+        """
+        Makes a copy of the current state of Context and saves it on an internal stack of saved states. When restore() is called, Context will be restored to the saved state. Multiple calls to save() and restore() can be nested; each call to restore() restores the state from the matching paired save().
+        """
+        _cairo.cairo_save(self._cairo_t)
+
+    _cairo.cairo_scale.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
+    def scale(self, sx, sy):
+        """
+        Modifies the current transformation matrix (CTM) by scaling the X and Y user-space axes by sx and sy respectively. The scaling of the axes takes place after any existing transformation of user space.
+        """
+        _cairo.cairo_scale(self, sx, sy)
+
+    _cairo.cairo_select_font_face.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_int)
+    def select_font_face(self, family, slant=FONT_SLANT_NORMAL, weight=FONT_WEIGHT_NORMAL):
+        """
+        Note: The select_font_face() function call is part of what the cairo designers call the “toy” text API. It is convenient for short demos and simple programs, but it is not expected to be adequate for serious text-using applications.
+
+        Selects a family and style of font from a simplified description as a family name, slant and weight. Cairo provides no operation to list available family names on the system (this is a “toy”, remember), but the standard CSS2 generic family names, (“serif”, “sans-serif”, “cursive”, “fantasy”, “monospace”), are likely to work as expected.
+
+        For “real” font selection, see the font-backend-specific font_face_create functions for the font backend you are using. (For example, if you are using the freetype-based cairo-ft font backend, see cairo_ft_font_face_create_for_ft_face() or cairo_ft_font_face_create_for_pattern().) The resulting font face could then be used with cairo_scaled_font_create() and cairo_set_scaled_font().
+
+        Similarly, when using the “real” font support, you can call directly into the underlying font system, (such as fontconfig or freetype), for operations such as listing available fonts, etc.
+
+        It is expected that most applications will need to use a more comprehensive font handling and text layout library, (for example, pango), in conjunction with cairo.
+
+        If text is drawn without a call to select_font_face(), (nor set_font_face() nor set_scaled_font()), the default family is platform-specific, but is essentially “sans-serif”. Default slant is cairo.FONT_SLANT_NORMAL, and default weight is cairo.FONT_WEIGHT_NORMAL.
+
+        This function is equivalent to a call to ToyFontFace followed by set_font_face().
+        """
+        _cairo.cairo_select_font_face(self, family, slant, weight)
+
+    def set_antialias(self, antialis):
+        """
+        Set the antialiasing mode of the rasterizer used for drawing shapes. This value is a hint, and a particular backend may or may not support a particular value. At the current time, no backend supports cairo.ANTIALIAS_SUBPIXEL when drawing shapes.
+
+        Note that this option does not affect text rendering, instead see FontOptions.set_antialias().
+        """
+        _cairo.cairo_set_antialias(self._cairo_t, antialis)
+
+    def set_dash(self, dashes, offset=0):
+        """
+        Sets the dash pattern to be used by stroke(). A dash pattern is specified by dashes - a sequence of positive values. Each value provides the length of alternate “on” and “off” portions of the stroke. The offset specifies an offset into the pattern at which the stroke begins.
+
+        Each “on” segment will have caps applied as if the segment were a separate sub-path. In particular, it is valid to use an “on” length of 0.0 with cairo.LINE_CAP_ROUND or cairo.LINE_CAP_SQUARE in order to distributed dots or squares along a path.
+
+        Note: The length values are in user-space units as evaluated at the time of stroking. This is not necessarily the same as the user space at the time of set_dash().
+
+        If the number of dashes is 0 dashing is disabled.
+
+        If the number of dashes is 1 a symmetric pattern is assumed with alternating on and off portions of the size specified by the single value in dashes.
+
+        NOTE: pycairo has requires a wrong type for 'offset' which should have been a double in cairo.
+        """
+        _cairo.cairo_set_dash(self, (ctypes.c_double*len(dashes))(*dashes), len(dashes), ctypes.c_double.from_param(offset))
+
+    def set_fill_rule(self, fill_rule):
+        """
+        @param fill_rule (int): a FILL RULE to set the within the cairo context. The fill rule is used to determine which regions are inside or outside a complex (potentially self-intersecting) path. The current fill rule affects both fill() and clip().
+
+        The default fill rule is cairo.FILL_RULE_WINDING.
+        """
+        _cairo.cairo_set_fill_rule(self._cairo_t, fill_rule)
+
+    def set_font_face(self, font_face):
+        """
+        @param font_face: a FontFace, or None to restore to the default FontFace
+        Replaces the current FontFace object in the Context with font_face.
+        """
+        _cairo.cairo_set_font_face(self._cairo_t, font_face)
+
+    def set_font_matrix(self, matrix):
+        """
+        @param matrix: a Matrix describing a transform to be applied to the current font.
+        Sets the current font matrix to matrix. The font matrix gives a transformation from the design space of the font (in this space, the em-square is 1 unit by 1 unit) to user space. Normally, a simple scale is used (see set_font_size()), but a more complex font matrix can be used to shear the font or stretch it unequally along the two axes
+        """
+        _cairo.cairo_set_font_matrix(self, matrix)
+
+    def set_font_options(self, options):
+        """
+        @param options: FontOptions to use
+        Sets a set of custom font rendering options for the Context. Rendering options are derived by merging these options with the options derived from underlying surface; if the value in options has a default value (like cairo.ANTIALIAS_DEFAULT), then the value from the surface is used.
+        """
+        _cairo.cairo_set_font_options(self, options)
+
+    def set_font_size(self, size):
+        """
+        @param size (float): the new font size, in user space units
+        Sets the current font matrix to a scale by a factor of size, replacing any font matrix previously set with set_font_size() or set_font_matrix(). This results in a font size of size user space units. (More precisely, this matrix will result in the font’s em-square being a size by size square in user space.)
+
+        If text is drawn without a call to set_font_size(), (nor set_font_matrix() nor set_scaled_font()), the default font size is 10.0.
+        """
+        _cairo.cairo_set_font_size(self, ctypes.c_double.from_param(size))
+
+    def set_line_cap(self, line_cap):
+        """
+        @param line_cap: a LINE_CAP style
+        Sets the current line cap style within the Context.
+
+        As with the other stroke parameters, the current line cap style is examined by stroke(), stroke_extents(), and stroke_to_path(), but does not have any effect during path construction.
+
+        The default line cap style is cairo.LINE_CAP_BUTT.
+        """
+        _cairo.cairo_set_line_cap(self, line_cap)
+
+    def set_line_join(self, line_join):
+        """
+        @param line_join: a LINE_JOIN style
+        Sets the current line join style within the Context.
+
+        As with the other stroke parameters, the current line join style is examined by stroke(), stroke_extents(), and stroke_to_path(), but does not have any effect during path construction.
+
+        The default line join style is cairo.LINE_JOIN_MITER.
+        """
+        _cairo.cairo_set_line_join(self, line_join)
+
+    def set_line_width(self, width):
+        """
+        @param width (float): a line width
+        Sets the current line width within the Context. The line width value specifies the diameter of a pen that is circular in user space, (though device-space pen may be an ellipse in general due to scaling/shear/rotation of the CTM).
+
+        Note: When the description above refers to user space and CTM it refers to the user space and CTM in effect at the time of the stroking operation, not the user space and CTM in effect at the time of the call to set_line_width(). The simplest usage makes both of these spaces identical. That is, if there is no change to the CTM between a call to set_line_width() and the stroking operation, then one can just pass user-space values to set_line_width() and ignore this note.
+
+        As with the other stroke parameters, the current line width is examined by stroke(), stroke_extents(), and stroke_to_path(), but does not have any effect during path construction.
+        """
+        _cairo.cairo_set_line_width(self, ctypes.c_double.from_param(width))
+
+    def set_matrix(self, matrix):
+        """
+        @param matrix: a transformation Matrix from user space to device space.
+        Modifies the current transformation matrix (CTM) by setting it equal to matrix.
+        """
+        _cairo.cairo_set_matrix(self, matrix)
+
+    def set_miter_limit(self, limit):
+        """
+        Sets the current miter limit within the Context.
+
+        If the current line join style is set to cairo.LINE_JOIN_MITER (see set_line_join()), the miter limit is used to determine whether the lines should be joined with a bevel instead of a miter. Cairo divides the length of the miter by the line width. If the result is greater than the miter limit, the style is converted to a bevel.
+
+        As with the other stroke parameters, the current line miter limit is examined by stroke(), stroke_extents(), and stroke_to_path(), but does not have any effect during path construction.
+
+        The default miter limit value is 10.0, which will convert joins with interior angles less than 11 degrees to bevels instead of miters. For reference, a miter limit of 2.0 makes the miter cutoff at 60 degrees, and a miter limit of 1.414 makes the cutoff at 90 degrees.
+
+        A miter limit for a desired angle can be computed as:
+
+        miter limit = 1/math.sin(angle/2)
+        """
+        _cairo.cairo_set_miter_limit(self, ctypes.c_double.from_param(limit))
+
+    def set_operator(self, op):
+        """
+        @param op: the compositing OPERATOR to set for use in all drawing operations.
+        The default operator is cairo.OPERATOR_OVER.
+        """
+        _cairo.cairo_set_operator(self, op)
+
+    def set_scaled_font(self, scaled_font):
+        """
+        @param scaled_font: a ScaledFont
+        Replaces the current font face, font matrix, and font options in the Context with those of the ScaledFont. Except for some translation, the current CTM of the Context should be the same as that of the ScaledFont, which can be accessed using ScaledFont.get_ctm().
+        """
+        _cairo.cairo_set_scaled_font(self, scaled_font)
+
+    def set_source(self, source):
+        """
+        @param source: a Pattern to be used as the source for subsequent drawing operations.
+        Sets the source pattern within Context to source. This pattern will then be used for any subsequent drawing operation until a new source pattern is set.
+
+        Note: The pattern’s transformation matrix will be locked to the user space in effect at the time of set_source(). This means that further modifications of the current transformation matrix will not affect the source pattern. See Pattern.set_matrix().
+
+        The default source pattern is a solid pattern that is opaque black, (that is, it is equivalent to set_source_rgb(0.0, 0.0, 0.0).
+        """
+        _cairo.cairo_set_source(self._cairo_t, source._pattern_t)
+
+    _cairo.cairo_set_source_rgb.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+    def set_source_rgb(self, red, green, blue):
+        """
+        @param red (float): red component of color
+        @param green (float): green component of color
+        @param blue (float): blue component of color
+        Sets the source pattern within Context to an opaque color. This opaque color will then be used for any subsequent drawing operation until a new source pattern is set.
+
+        The color components are floating point numbers in the range 0 to 1. If the values passed in are outside that range, they will be clamped.
+
+        The default source pattern is opaque black, (that is, it is equivalent to set_source_rgb(0.0, 0.0, 0.0).
+        """
+        _cairo.cairo_set_source_rgb(self._cairo_t, red, green, blue)
+
+    _cairo.cairo_set_source_rgba.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+    def set_source_rgba(self, red, green, blue, alpha=1.0):
+        """
+        @param red (float): red component of color
+        @param green (float): green component of color
+        @param blue (float): blue component of color
+        @param alpha (float): alpha component of color
+        Sets the source pattern within Context to a translucent color. This color will then be used for any subsequent drawing operation until a new source pattern is set.
+
+        The color and alpha components are floating point numbers in the range 0 to 1. If the values passed in are outside that range, they will be clamped.
+
+        The default source pattern is opaque black, (that is, it is equivalent to set_source_rgba(0.0, 0.0, 0.0, 1.0).
+        """
+        _cairo.cairo_set_source_rgba(self._cairo_t, red, green, blue, alpha)
+
+    _cairo.cairo_set_source_surface.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
+    def set_source_surface(self, surface, x=0.0, y=0.0):
+        """
+        @param surface: a Surface to be used to set the source pattern
+        @param x (float): User-space X coordinate for surface origin
+        @param y (float): User-space Y coordinate for surface origin
+        This is a convenience function for creating a pattern from a Surface and setting it as the source in Context with set_source().
+
+        The x and y parameters give the user-space coordinate at which the surface origin should appear. (The surface origin is its upper-left corner before any transformation has been applied.) The x and y patterns are negated and then set as translation values in the pattern matrix.
+
+        Other than the initial translation pattern matrix, as described above, all other pattern attributes, (such as its extend mode), are set to the default values as in SurfacePattern. The resulting pattern can be queried with get_source() so that these attributes can be modified if desired, (eg. to create a repeating pattern with Pattern.set_extend()).
+        """
+        _cairo.cairo_set_source_surface(self._cairo_t, surface._surface_t, x, y)
+
+    _cairo.cairo_set_tolerance.argtypes = (ctypes.c_void_p, ctypes.c_double)
+    def set_tolerance(self, tolerance):
+        """
+        tolerance (float) – the tolerance, in device units (typically pixels)
+        Sets the tolerance used when converting paths into trapezoids. Curved segments of the path will be subdivided until the maximum deviation between the original path and the polygonal approximation is less than tolerance. The default value is 0.1. A larger value will give better performance, a smaller value, better appearance. (Reducing the value from the default value of 0.1 is unlikely to improve appearance significantly.) The accuracy of paths within Cairo is limited by the precision of its internal arithmetic, and the prescribed tolerance is restricted to the smallest representable internal value.
+        """
+        _cairo.cairo_set_tolerance(self, tolerance)
+
+    def show_glyphs(self, glyphs, num_glyphs=-1):
+        """
+        @param glyphs (a sequence of (int, float, float)): glyphs to show
+        @param num_glyphs (int): number of glyphs to show, defaults to showing all glyphs
+        A drawing operator that generates the shape from an array of glyphs, rendered according to the current font face, font size (font matrix), and font options.
+        """
+        if num_glyphs < 0: num_glyphs = len(glyphs)
+        array = (cairo_glyph_t * num_glyphs)(*glyphs[:num_glyphs])
+        # something just feels no sense here.
+        _cairo.show_glyphs(self, array, num_glyphs)
+
+    def show_page(self):
+        """
+        Emits and clears the current page for backends that support multiple pages. Use copy_page() if you don’t want to clear the page.
+
+        This is a convenience function that simply calls ctx.get_target() . show_page()
+        """
+        _cairo.cairo_show_page(self)
+
+    def show_text(self, utf8):
+        """
+        A drawing operator that generates the shape from a string of text, rendered according to the current font_face, font_size (font_matrix), and font_options.
+
+        This function first computes a set of glyphs for the string of text. The first glyph is placed so that its origin is at the current point. The origin of each subsequent glyph is offset from that of the previous glyph by the advance values of the previous glyph.
+
+        After this call the current point is moved to the origin of where the next glyph would be placed in this same progression. That is, the current point will be at the origin of the final glyph offset by its advance values. This allows for easy display of a single logical string with multiple calls to show_text().
+
+        Note: The show_text() function call is part of what the cairo designers call the “toy” text API. It is convenient for short demos and simple programs, but it is not expected to be adequate for serious text-using applications. See show_glyphs() for the “real” text display API in cairo.
+        """
+        _cairo.cairo_show_text(self, ctypes.c_char_p(utf8.encode("utf-8")))
+
+    def stroke(self):
+        """
+        A drawing operator that strokes the current path according to the current line width, line join, line cap, and dash settings. After stroke(), the current path will be cleared from the cairo context. See set_line_width(), set_line_join(), set_line_cap(), set_dash(), and stroke_preserve().
+
+        Note: Degenerate segments and sub-paths are treated specially and provide a useful result. These can result in two different situations:
+
+        1. Zero-length “on” segments set in set_dash(). If the cap style is cairo.LINE_CAP_ROUND or cairo.LINE_CAP_SQUARE then these segments will be drawn as circular dots or squares respectively. In the case of cairo.LINE_CAP_SQUARE, the orientation of the squares is determined by the direction of the underlying path.
+
+        2. A sub-path created by move_to() followed by either a close_path() or one or more calls to line_to() to the same coordinate as the move_to(). If the cap style is cairo.LINE_CAP_ROUND then these sub-paths will be drawn as circular dots. Note that in the case of cairo.LINE_CAP_SQUARE a degenerate sub-path will not be drawn at all, (since the correct orientation is indeterminate).
+
+        In no case will a cap style of cairo.LINE_CAP_BUTT cause anything to be drawn in the case of either degenerate segments or sub-paths.
+        """
+        _cairo.cairo_stroke(self)
+
+    def stroke_extents(self):
+        """
+        @returns (x1: float, y1: float, x2: float, y2: float)
+        x1: left of the resulting extents
+        y1: top of the resulting extents
+        x2: right of the resulting extents
+        y2: bottom of the resulting extents
+        Computes a bounding box in user coordinates covering the area that would be affected, (the “inked” area), by a stroke() operation given the current path and stroke parameters. If the current path is empty, returns an empty rectangle (0, 0, 0, 0). Surface dimensions and clipping are not taken into account.
+
+        Note that if the line width is set to exactly zero, then stroke_extents() will return an empty rectangle. Contrast with path_extents() which can be used to compute the non-empty bounds as the line width approaches zero.
+
+        Note that stroke_extents() must necessarily do more work to compute the precise inked areas in light of the stroke parameters, so path_extents() may be more desirable for sake of performance if non-inked path extents are desired.
+
+        See stroke(), set_line_width(), set_line_join(), set_line_cap(), set_dash(), and stroke_preserve().
+        """
+        x1, y1, x2, y2 = (ctypes.c_double() for i in range(4))
+        _cairo.cairo_stroke_extents(self, *(ctypes.byref(i) for i in (x1, y1, x2, y2)))
+        return (i.value for i in (x1, y1, x2, y2))
+
+    def stroke_preserve(self):
+        """
+        A drawing operator that strokes the current path according to the current line width, line join, line cap, and dash settings. Unlike stroke(), stroke_preserve() preserves the path within the cairo context.
+
+        See set_line_width(), set_line_join(), set_line_cap(), set_dash(), and stroke_preserve().
+        """
+        _cairo.cairo_stroke_preserve(self)
+
+    def text_extents(self, utf8):
+        """
+        @param utf8 (str): text to get extents for
+        @returns: (x_bearing, y_bearing, width, height, x_advance, y_advance)
+        Gets the extents for a string of text. The extents describe a user-space rectangle that encloses the “inked” portion of the text, (as it would be drawn by Context.show_text()). Additionally, the x_advance and y_advance values indicate the amount by which the current point would be advanced by Context.show_text().
+
+        Note that whitespace characters do not directly contribute to the size of the rectangle (extents.width and extents.height). They do contribute indirectly by changing the position of non-whitespace characters. In particular, trailing whitespace characters are likely to not affect the size of the rectangle, though they will affect the x_advance and y_advance values.
+        """
+        extents = cairo_text_extents_t()
+        _cairo.cairo_text_extents(self, ctypes.c_char_p(utf8.encode("utf-8")), ctypes.byref(extents))
+        return tuple(getattr(extents, i[0]) for i in extents._fields_)
+
+    _cairo.cairo_text_path.argtypes = (ctypes.c_void_p, ctypes.c_char_p)
+    def text_path(self, utf8):
+        """
+        Adds closed paths for text to the current path. The generated path if filled, achieves an effect similar to that of Context.show_text().
+
+        Text conversion and positioning is done similar to Context.show_text().
+
+        Like Context.show_text(), After this call the current point is moved to the origin of where the next glyph would be placed in this same progression. That is, the current point will be at the origin of the final glyph offset by its advance values. This allows for chaining multiple calls to to Context.text_path() without having to set current point in between.
+
+        Note: The text_path() function call is part of what the cairo designers call the “toy” text API. It is convenient for short demos and simple programs, but it is not expected to be adequate for serious text-using applications. See Context.glyph_path() for the “real” text path API in cairo.
+        """
+        _cairo.cairo_text_path(self._cairo_t, utf8.encode("utf-8"))
+
+    def transform(self, matrix):
+        """
+        @param matrix: a transformation Matrix to be applied to the user-space axes
+        Modifies the current transformation matrix (CTM) by applying matrix as an additional transformation. The new transformation of user space takes place after any existing transformation.
+        """
+        _cairo.cairo_transform(self, matrix)
+
+    _cairo.cairo_translate.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
+    def translate(self, tx, ty):
+        """
+        @param tx (float): amount to translate in the X direction
+        @param ty (float): amount to translate in the Y direction
+        Modifies the current transformation matrix (CTM) by translating the user-space origin by (tx, ty). This offset is interpreted as a user-space coordinate according to the CTM in place before the new call to translate(). In other words, the translation of the user-space origin takes place after any existing transformation.
+        """
+        _cairo.cairo_translate(self, tx, ty)
+
+    def user_to_device(self, x, y):
+        """
+        @param x (float): X value of coordinate
+        @param y (float): Y value of coordinate
+        @return: (float, float)
+        Transform a coordinate from user space to device space by multiplying the given point by the current transformation matrix (CTM).
+
+        Origin:
+        cairo.device_to_user() in pycairo
+        cairo_device_to_user() in cairo
+        """
+        x, y = ctypes.c_double(), ctypes.c_double()
+        _cairo.cairo_user_to_device(self._cairo_t, ctypes.byref(x), ctypes.byref(y))
+        return x.value, y.value
+
+    def user_to_device_distance(self, dx, dy):
+        """
+        @param dx (float): X component of a distance vector
+        @param dy (float):Y component of a distance vector
+        @return: (float, float)
+        Transform a distance vector from user space to device space. This function is similar to Context.user_to_device() except that the translation components of the CTM will be ignored when transforming (dx,dy).
+
+        Origin:
+        cairo.user_to_device_distance() in pycairo
+        cairo_user_to_device_distance() in cairo
+        """
+        dx, dy = ctypes.c_double(), ctypes.c_double()
+        _cairo.cairo_user_to_device(self._cairo_t, ctypes.byref(dx), ctypes.byref(dy))
+        return dx.value, dy.value
+
+    def status(self):
+        return _cairo.cairo_status(self._cairo_t)
+
+    def save(self):
+        _cairo.cairo_save(self._cairo_t)
+
+
 
 _surface_types = {
     SURFACE_TYPE_IMAGE: ImageSurface,
@@ -1593,32 +2149,39 @@ _pattern_types = {
     PATTERN_TYPE_RASTER_SOURC: None,
 }
 
+def version():
+    return _cairo.cairo_version()
+
+_cairo.cairo_version_string.restype = ctypes.c_char_p
+def version_string():
+    return _cairo.cairo_version_string()
+
 if __name__ == "__main__":
     # testing
-    """
-    s = ImageSurface(FORMAT_ARGB32, 100, 100)
-    c = Context(s)
-    c.set_source_rgba(1, 1, 1, 1)
-    c.paint()
-    a = s._from_address(s._surface_t)
-    """
-    ""
-    bb = bytearray(100*100*4)
+    import array
+    #bb = bytearray(300*100*4)
+    bb = array.array("I", range(300*100))
     #b = (ctypes.c_char*len(bb)).from_buffer(bb)
-    b = (ctypes.c_char*len(bb)).from_buffer(bb)
+    #b = (ctypes.c_char*len(bb)).from_buffer(bb)
+    b = ctypes.POINTER(ctypes.c_uint)(ctypes.c_char_p.from_buffer(bb))
     #b = ctypes.cast(b, ctypes.POINTER(ctypes.c_int))
-    s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 100, 100, 400)
+    s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 300, 100, 1200)
     c = Context(s)
-    c.set_source_rgb(1, 1, 1)
-    c.paint()
     linear = LinearGradient(0, 0, 100, 100)
     linear.add_color_stop_rgb(0, 0, 0.3, 0.8)
     linear.add_color_stop_rgb(1, 0, 0.8, 0.3)
-
-    radial = RadialGradient(50, 50, 25, 50, 50, 75)
-    radial.add_color_stop_rgba(0, 0, 0, 0, 1)
-    radial.add_color_stop_rgba(0.5, 0, 0, 0, 0)
-
     c.set_source(linear)
-    c.mask(radial)
+    c.paint()
+
+    radial = RadialGradient(150, 50, 25, 150, 50, 75)
+    #radial.add_color_stop_rgba(0, 0, 0, 0, 1)
+    #radial.add_color_stop_rgba(0.5, 0, 0, 0, 0)
+    radial.add_color_stop_rgb(0, 1, 1, 1)
+    radial.add_color_stop_rgb(1, 0.7, 0.7, 0.7)
+
+    c.move_to(0, 75)
+    c.set_font_size(50)
+    c.text_path("Slide to unlock")
+    c.set_source(radial)
+    c.fill()
     s.write_to_png(b"hello.png")
