@@ -320,6 +320,10 @@ class cairo_glyph_t(ctypes.Structure):
     ("x", ctypes.c_double),
     ("y", ctypes.c_double)]
 
+cairo_write_func_t = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)
+
+cairo_read_func_t = cairo_write_func_t
+
 class Error(Exception): 
     """
     This exception is raised when a cairo object returns an error status.
@@ -560,7 +564,6 @@ class RadialGradient(Gradient):
         _cairo.cairo_pattern_get_linear_points(self, *tuple(ctypes.byref(i) for i in (x0, y0, r0, x1, y1, r1)))
         return tuple(i.value for i in (x0, y0, r0, x1, y1, r1))
 
-
 #############
 
 class FontFace:
@@ -677,7 +680,6 @@ class FontOptions:
 
     del i
 
-
 class Surface:
     """
     Surface is the abstract base class from which all the other surface classes derive. 
@@ -700,7 +702,7 @@ class Surface:
     def _from_address(cls, address):
         """Get a specific Surface object from the given address
 
-        This function uses cairo_surface_get_type() to determine the type of the cairo_surface_t and then transform them into a specific Python Surface type
+        This function uses cairo_surface_get_type() to determine the type of the cairo_surface_t and then transform them into a corresponding Python Surface type
         """
         surface = object.__new__(_surface_types[_cairo.cairo_surface_get_type(address)])
         surface._surface_t = address
@@ -879,7 +881,7 @@ class Surface:
         """
         _cairo.cairo_surface_show_page(self._cairo_t)
 
-    def write_to_png(self, filename):
+    def write_to_png(self, fobj):
         """
         Writes the contents of Surface to fobj as a PNG image.
 
@@ -893,8 +895,17 @@ class Surface:
         Taking cairo's way
         """
         ## pycairo's way is better
-        _cairo.cairo_surface_write_to_png(self._surface_t, filename)
+        if isinstance(fobj, str): 
+            return _cairo.cairo_surface_write_to_png(self._surface_t, bytes(fobj, "utf-8")) # in case fobj is a filename
 
+        def doWrite(closure, data, length):
+            try:
+                fobj.write(ctypes.string_at(data, length))
+                return STATUS_SUCCESS
+            except:
+                return STATUS_WRITE_ERROR;
+
+        return _cairo.cairo_surface_write_to_png_stream(self._surface_t, cairo_write_func_t(doWrite), None)
 
 class ImageSurface(Surface):
     """
@@ -980,7 +991,7 @@ class ImageSurface(Surface):
         return surface
 
     @classmethod
-    def create_from_png(self, filename):
+    def create_from_png(cls, fobj):
         """
         Creates a new image surface and initializes the contents to the given PNG file.
 
@@ -995,7 +1006,16 @@ class ImageSurface(Surface):
         """
         ## pycairo's way is more pythonic
         surface = object.__new__(cls)
-        surface._surface_t = _cairo.cairo_image_surface_create_from_png(filename)
+        if isinstance(fobj, str):
+            surface._surface_t = _cairo.cairo_image_surface_create_from_png(bytes(filename, "utf-8"))
+        else:
+            def doRead(closure, data, length):
+                try:
+                    (ctypes.c_char * length).from_address(data).raw = fobj.read(length)
+                    return STATUS_SUCCESS
+                except:
+                    return STATUS_READ_ERROR
+            surface._surface_t = _cairo.cairo_image_surface_create_from_png_stream(cairo_read_func_t(doRead), None)
         return surface
 
     @staticmethod
@@ -1036,6 +1056,11 @@ class ImageSurface(Surface):
     def get_width(self):
         return _cairo.cairo_image_surface_get_width(self._surface_t)
 
+class SVGSurface(Surface):
+
+    _cairo.cairo_svg_surface_create.argtypes = (ctypes.c_char_p, ctypes.c_double, ctypes.c_double)
+    def __init__(self, filename, width_in_points, height_in_points):
+        self._surface_t = _cairo.cairo_svg_surface_create(filename, width_in_points, height_in_points)
 
 class Context:
     """
@@ -1765,7 +1790,7 @@ class Context:
 
         This function is equivalent to a call to ToyFontFace followed by set_font_face().
         """
-        _cairo.cairo_select_font_face(self, family, slant, weight)
+        _cairo.cairo_select_font_face(self, bytes(family, "utf-8"), slant, weight)
 
     def set_antialias(self, antialis):
         """
@@ -1980,6 +2005,7 @@ class Context:
         """
         _cairo.cairo_show_page(self)
 
+    _cairo.cairo_show_text.argtypes = (ctypes.c_void_p, ctypes.c_char_p)
     def show_text(self, utf8):
         """
         A drawing operator that generates the shape from a string of text, rendered according to the current font_face, font_size (font_matrix), and font_options.
@@ -1990,7 +2016,7 @@ class Context:
 
         Note: The show_text() function call is part of what the cairo designers call the “toy” text API. It is convenient for short demos and simple programs, but it is not expected to be adequate for serious text-using applications. See show_glyphs() for the “real” text display API in cairo.
         """
-        _cairo.cairo_show_text(self, ctypes.c_char_p(utf8.encode("utf-8")))
+        _cairo.cairo_show_text(self, bytes(utf8, "utf-8"))
 
     def stroke(self):
         """
@@ -2035,14 +2061,14 @@ class Context:
 
     def text_extents(self, utf8):
         """
-        @param utf8 (str): text to get extents for
+        @param utf8 (bytes containing characters encoded utf-8): text to get extents for
         @returns: (x_bearing, y_bearing, width, height, x_advance, y_advance)
         Gets the extents for a string of text. The extents describe a user-space rectangle that encloses the “inked” portion of the text, (as it would be drawn by Context.show_text()). Additionally, the x_advance and y_advance values indicate the amount by which the current point would be advanced by Context.show_text().
 
         Note that whitespace characters do not directly contribute to the size of the rectangle (extents.width and extents.height). They do contribute indirectly by changing the position of non-whitespace characters. In particular, trailing whitespace characters are likely to not affect the size of the rectangle, though they will affect the x_advance and y_advance values.
         """
         extents = cairo_text_extents_t()
-        _cairo.cairo_text_extents(self, ctypes.c_char_p(utf8.encode("utf-8")), ctypes.byref(extents))
+        _cairo.cairo_text_extents(self, bytes(utf8, "utf-8"), ctypes.byref(extents))
         return tuple(getattr(extents, i[0]) for i in extents._fields_)
 
     _cairo.cairo_text_path.argtypes = (ctypes.c_void_p, ctypes.c_char_p)
@@ -2056,7 +2082,7 @@ class Context:
 
         Note: The text_path() function call is part of what the cairo designers call the “toy” text API. It is convenient for short demos and simple programs, but it is not expected to be adequate for serious text-using applications. See Context.glyph_path() for the “real” text path API in cairo.
         """
-        _cairo.cairo_text_path(self._cairo_t, utf8.encode("utf-8"))
+        _cairo.cairo_text_path(self._cairo_t, bytes(utf8, "utf-8"))
 
     def transform(self, matrix):
         """
@@ -2110,8 +2136,6 @@ class Context:
     def save(self):
         _cairo.cairo_save(self._cairo_t)
 
-
-
 _surface_types = {
     SURFACE_TYPE_IMAGE: ImageSurface,
     SURFACE_TYPE_PDF: None,
@@ -2154,34 +2178,42 @@ def version():
 
 _cairo.cairo_version_string.restype = ctypes.c_char_p
 def version_string():
-    return _cairo.cairo_version_string()
+    return str(_cairo.cairo_version_string(), "utf-8")
 
 if __name__ == "__main__":
     # testing
     import array
-    #bb = bytearray(300*100*4)
-    bb = array.array("I", range(300*100))
-    #b = (ctypes.c_char*len(bb)).from_buffer(bb)
+    bb = bytearray(400 * 400 * 4)
+    #bb = array.array("I", range(400*400))
     #b = (ctypes.c_char*len(bb)).from_buffer(bb)
     b = ctypes.POINTER(ctypes.c_uint)(ctypes.c_char_p.from_buffer(bb))
     #b = ctypes.cast(b, ctypes.POINTER(ctypes.c_int))
-    s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 300, 100, 1200)
+    s = ImageSurface.create_for_data(b, FORMAT_RGB24, 400, 400, 1600)
     c = Context(s)
-    linear = LinearGradient(0, 0, 100, 100)
+    linear = LinearGradient(0, 0, 400, 400)
     linear.add_color_stop_rgb(0, 0, 0.3, 0.8)
     linear.add_color_stop_rgb(1, 0, 0.8, 0.3)
     c.set_source(linear)
     c.paint()
 
-    radial = RadialGradient(150, 50, 25, 150, 50, 75)
+    radial = RadialGradient(200, 200, 25, 200, 200, 75)
     #radial.add_color_stop_rgba(0, 0, 0, 0, 1)
     #radial.add_color_stop_rgba(0.5, 0, 0, 0, 0)
     radial.add_color_stop_rgb(0, 1, 1, 1)
     radial.add_color_stop_rgb(1, 0.7, 0.7, 0.7)
 
-    c.move_to(0, 75)
+    c.set_source(linear)
+    c.mask(radial)
     c.set_font_size(50)
-    c.text_path("Slide to unlock")
-    c.set_source(radial)
-    c.fill()
-    s.write_to_png(b"hello.png")
+    c.move_to(0, 400)
+    c.set_source_rgb(1, 1, 1)
+    c.show_text("hello")
+    
+    with open("hello.png", "wb+") as f:
+        s.write_to_png(f)
+
+    #s = SVGSurface(b"output.svg", 1000, 1000)
+    #c = Context(s)
+    #c.move_to(0, 0)
+    #c.line_to(1000, 1000)
+    #c.stroke()
