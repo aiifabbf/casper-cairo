@@ -941,6 +941,7 @@ class ImageSurface(Surface):
         cairo.ImageSurface.create_for_data() in pycairo (though not available for now)
         cairo_image_surface_create_for_data() in cairo
         """
+        data = ctypes.addressof(ctypes.c_char.from_buffer(data))
         surface = object.__new__(cls)
         surface._surface_t = _cairo.cairo_image_surface_create_for_data(data, format, width, height, stride)
         #surface._as_parameter_ = surface._surface_t
@@ -987,6 +988,22 @@ class ImageSurface(Surface):
         Result: Works. bb and s.get_data() change synchronously(b is a c_char so it does not support indexing). No problem found.
 
         I prefer the ctypes.c_char_Array_* method being inserted here to let @param data be any Python writable buffer.
+
+        NOTE 2016/2/6: NEW METHODS
+
+        - ctypes.POINTER method
+
+        bb = bytearray(40000)
+        b = ctypes.POINTER(ctypes.c_char)(ctypes.c_char.from_buffer(bb))
+        s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 100, 100, 400)
+
+        - ctypes.addressof method
+
+        bb = bytearray(40000)
+        b = ctypes.addressof(ctypes.c_char.from_buffer(bb))
+        s = ImageSurface.create_for_data(b, FORMAT_ARGB32, 100, 100, 400)
+
+        Taken the last method.
         """
         return surface
 
@@ -1039,6 +1056,8 @@ class ImageSurface(Surface):
         Origin:
         cairo.ImageSurface.get_data() in pycairo (yet not available, in docs, while available in the LATEST release, returning a memoryview object)
         cairo_image_surface_get_data() in cairo
+
+        NOTE: this method returns a ctypes c_char_Array object since cairo C lib documents this return type as so. 
         """
         ## Still thinking about how to return a memoryview object which is more pythonic, though c_char_Array_* itself supports nearly everything a memoryview has.
         ## Note 2016/1/13: memoryview doenst support format <c. Don't know what's wrong.
@@ -1542,7 +1561,7 @@ class Context:
         """
         return _cairo.cairo_get_tolerance(self._cairo_t)
 
-    def glyph_extents(self, glyphs, num_glyphs=-1):
+    def glyph_extents(self, glyphs, num_glyphs=None):
         pass
 
     def has_current_point(self):
@@ -2173,22 +2192,25 @@ _pattern_types = {
     PATTERN_TYPE_RASTER_SOURC: None,
 }
 
-def version():
+def cairo_version():
     return _cairo.cairo_version()
 
 _cairo.cairo_version_string.restype = ctypes.c_char_p
-def version_string():
+def cairo_version_string():
     return str(_cairo.cairo_version_string(), "utf-8")
+
+version = cairo_version_string()
+version_info = tuple(int(i) for i in cairo_version_string().split("."))
 
 if __name__ == "__main__":
     # testing
-    import array
+    #import array
     bb = bytearray(400 * 400 * 4)
     #bb = array.array("I", range(400*400))
     #b = (ctypes.c_char*len(bb)).from_buffer(bb)
-    b = ctypes.POINTER(ctypes.c_uint)(ctypes.c_char_p.from_buffer(bb))
+    #b = ctypes.addressof(ctypes.c_char.from_buffer(bb))
     #b = ctypes.cast(b, ctypes.POINTER(ctypes.c_int))
-    s = ImageSurface.create_for_data(b, FORMAT_RGB24, 400, 400, 1600)
+    s = ImageSurface.create_for_data(bb, FORMAT_RGB24, 400, 400, 1600)
     c = Context(s)
     linear = LinearGradient(0, 0, 400, 400)
     linear.add_color_stop_rgb(0, 0, 0.3, 0.8)
@@ -2208,9 +2230,11 @@ if __name__ == "__main__":
     c.move_to(0, 400)
     c.set_source_rgb(1, 1, 1)
     c.show_text("hello")
-    
+
     with open("hello.png", "wb+") as f:
         s.write_to_png(f)
+
+    s.finish()
 
     #s = SVGSurface(b"output.svg", 1000, 1000)
     #c = Context(s)
