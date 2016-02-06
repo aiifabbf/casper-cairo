@@ -395,7 +395,7 @@ class Matrix:
     @classmethod
     def _from_address(cls, address):
         matrix = object.__new__(cls)
-        matrix._matrix_t = ctypes.POINTER(cairo_matrix_t).from_address(address)
+        matrix._matrix_t = ctypes.POINTER(cairo_matrix_t)(ctypes.c_void_p(address))
         return matrix
 
     def invert(self):
@@ -404,6 +404,7 @@ class Matrix:
         """
         _cairo.cairo_matrix_invert(self._matrix_t)
 
+    _cairo.cairo_matrix_multiply.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
     def multiply(self, matrix2):
         """
         Multiplies the affine transformations in Matrix and matrix2 together. The effect of the resulting transformation is to first apply the transformation in Matrix to the coordinates and then apply the transformation in matrix2 to the coordinates.
@@ -418,13 +419,14 @@ class Matrix:
         _cairo.cairo_matrix_multiply(result, self, matrix2)
         return result
 
+    _cairo.cairo_matrix_rotate.argtypes = (ctypes.c_void_p, ctypes.c_double)
     def rotate(self, radians):
         """
         @param radians: angle of rotation, in radians. The direction of rotation is defined such that positive angles rotate in the direction from the positive X axis toward the positive Y axis. With the default axis orientation of cairo, positive angles rotate in a clockwise direction.
 
         Applies rotation by radians to the transformation in matrix . The effect of the new transformation is to first rotate the coordinates by radians , then apply the original transformation to the coordinates.
         """
-        _cairo.cairo_matrix_rotate(self, ctypes.c_double(radians))
+        _cairo.cairo_matrix_rotate(self, radians)
 
     _cairo.cairo_matrix_scale.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
     def scale(self, sx, sy):
@@ -455,11 +457,12 @@ class Matrix:
         _cairo.cairo_matrix_transform_point(self, ctypes.byref(x), ctypes.byref(y))
         return tuple(x.value, y.value)
 
+    _cairo.cairo_matrix_translate.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double)
     def translate(self, tx, ty):
         """
         Applies a transformation by tx, ty to the transformation in Matrix. The effect of the new transformation is to first translate the coordinates by tx and ty, then apply the original transformation to the coordinates.
         """
-        _cairo.cairo_matrix_translate(self, ctypes.c_double(tx), ctypes.c_double(ty))
+        _cairo.cairo_matrix_translate(self, tx, ty)
 
 class Path:
     """
@@ -468,7 +471,7 @@ class Path:
     *It can be instantiated by _from_address().
     """
     def __init__(self):
-        self._path_t = None
+        self._path_t = ctypes.POINTER(cairo_path_t)()
 
     @property
     def _as_parameter_(self):
@@ -483,7 +486,7 @@ class Path:
 class Pattern:
 
     def __init__(self):
-        self._pattern_t = None
+        self._pattern_t = ctypes.c_void_p()
 
     @property
     def _as_parameter_(self):
@@ -492,7 +495,7 @@ class Pattern:
     @classmethod
     def _from_address(cls, address):
         pattern = object.__new__(_pattern_types[_cairo.cairo_pattern_get_type(address)])
-        pattern._pattern_t = address
+        pattern._pattern_t = ctypes.c_void_p(address)
         return pattern
 
     def get_extend(self):
@@ -519,6 +522,7 @@ class Pattern:
 class SolidPattern(Pattern):
 
     _cairo.cairo_pattern_create_rgba.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
+    _cairo.cairo_pattern_create_rgba.restype = ctypes.c_void_p
     def __init__(self, red, green, blue, alpha=1.0):
         self._pattern_t = _cairo.cairo_pattern_create_rgba(red, green, blue, alpha)
 
@@ -579,7 +583,7 @@ class FontFace:
     This class cannot be instantiated directly, it is returned by Context.get_font_face().
     """
     def __init__(self):
-        self._font_face_t = None
+        self._font_face_t = ctypes.c_void_p()
 
     @property
     def _as_parameter_(self):
@@ -588,7 +592,7 @@ class FontFace:
     @classmethod
     def _from_address(cls, address):
         font_face = object.__new__(cls)
-        font_face._font_face_t = address
+        font_face._font_face_t = ctypes.c_void_p(address)
         return font_face
 
     def status(self):
@@ -622,7 +626,7 @@ class ScaledFont:
     @classmethod
     def _from_address(cls, address):
         scaled_font = object.__new__(cls)
-        scaled_font._scaled_font_t = address
+        scaled_font._scaled_font_t = ctypes.c_void_p(address)
         return scaled_font
 
     def extents(self):
@@ -666,7 +670,7 @@ class FontOptions:
     New features may be added to a FontOptions in the future. For this reason, FontOptions.copy(), FontOptions.equal(), FontOptions.merge(), and FontOptions.hash() should be used to copy, check for equality, merge, or compute a hash value of FontOptions objects.
     """
     def __init__(self):
-        self._font_options_t = None
+        self._font_options_t = ctypes.c_void_p()
 
     @property
     def _as_parameter_(self):
@@ -675,7 +679,7 @@ class FontOptions:
     @classmethod
     def _from_address(cls, address):
         font_options = object.__new__(cls)
-        font_options._font_options_t = address
+        font_options._font_options_t = ctypes.c_void_p(address)
         return font_options
     
     for i in ("antialias", "hint_metrics", "hint_style", "subpixel_order"):
@@ -694,7 +698,7 @@ class Surface:
     """
 
     def __init__(self):
-        self._surface_t = None
+        self._surface_t = ctypes.c_void_p()
         #self._as_parameter_ = self._surface_t
 
     @property
@@ -709,7 +713,7 @@ class Surface:
         This function uses cairo_surface_get_type() to determine the type of the cairo_surface_t and then transform them into a corresponding Python Surface type
         """
         surface = object.__new__(_surface_types[_cairo.cairo_surface_get_type(address)])
-        surface._surface_t = address
+        surface._surface_t = ctypes.c_void_p(address)
         #surface._as_parameter_ = surface._surface_t
         return surface
 
@@ -915,7 +919,7 @@ class ImageSurface(Surface):
     """
     A cairo.ImageSurface provides the ability to render to memory buffers either allocated by cairo or by the calling code. The supported image formats are those defined in FORMAT attributes.
     """
-
+    _cairo.cairo_image_surface_create.restype = ctypes.c_void_p
     def __init__(self, format, width, height):
         """
         Creates an ImageSurface of the specified format and dimensions. Initially the surface contents are all 0. (Specifically, within each pixel, each color or alpha channel belonging to format will be 0. The contents of bits within a pixel, but not belonging to the given format are undefined).
@@ -945,7 +949,7 @@ class ImageSurface(Surface):
         cairo.ImageSurface.create_for_data() in pycairo (though not available for now)
         cairo_image_surface_create_for_data() in cairo
         """
-        data = ctypes.addressof(ctypes.c_char.from_buffer(data))
+        data = ctypes.pointer(ctypes.c_char.from_buffer(data))
         surface = object.__new__(cls)
         surface._surface_t = _cairo.cairo_image_surface_create_for_data(data, format, width, height, stride)
         #surface._as_parameter_ = surface._surface_t
@@ -1091,7 +1095,8 @@ class Context:
 
     Contexts can be pushed to a stack via Context.save(). They may then safely be changed, without loosing the current state. Use Context.restore() to restore to the saved state.
     """
-
+    _cairo.cairo_create.argtypes = (ctypes.c_void_p, )
+    _cairo.cairo_create.restype = ctypes.c_void_p
     def __init__(self, target):
         """
         Creates a new Context with all graphics state parameters set to default values and with target as a target surface. The target surface should be constructed with a backend-specific function such as ImageSurface (or any other cairo backend surface create variant).
@@ -1104,7 +1109,10 @@ class Context:
             self._cairo_t = _cairo.cairo_create(target._surface_t)
         except:
             raise Error("MemoryError: Insufficient memory.")
-        self._as_parameter_ = self._cairo_t
+
+    @property
+    def _as_parameter_(self):
+        return self._cairo_t
 
     def append_path(self, path):
         """
@@ -1587,7 +1595,7 @@ class Context:
         Adds closed paths for the glyphs to the current path. The generated path if filled, achieves an effect similar to that of Context.show_glyphs().
         """
         if not num_glyphs: num_glyphs = len(glyphs)
-        
+
         glyphs = (cairo_glyph_t * num_glyphs)(*glyphs[:num_glyphs])
         _cairo.cairo_glyph_path(self, glyphs, num_glyphs)
 
