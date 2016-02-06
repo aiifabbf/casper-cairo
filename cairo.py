@@ -1577,8 +1577,19 @@ class Context:
         extents = cairo_text_extents_t()
 
         _cairo.cairo_glyph_extents(self, glyphs, num_glyphs, ctypes.byref(extents))
-
         return tuple(getattr(extents, i[0]) for i in extents._fields_)
+
+    def glyph_path(self, glyphs, num_glyphs=None):
+        """
+        @param glyphs (a sequence of (int, float, float)): glyphs to show
+        @param num_glyphs (int): number of glyphs to show, defaults to showing all
+
+        Adds closed paths for the glyphs to the current path. The generated path if filled, achieves an effect similar to that of Context.show_glyphs().
+        """
+        if not num_glyphs: num_glyphs = len(glyphs)
+        
+        glyphs = (cairo_glyph_t * num_glyphs)(*glyphs[:num_glyphs])
+        _cairo.cairo_glyph_path(self, glyphs, num_glyphs)
 
     def has_current_point(self):
         """
