@@ -385,7 +385,7 @@ class Matrix:
 
         matrix = cairo.Matrix(xx=sy, yy=sy)
         """
-        self._matrix_t = ctypes.pointer(cairo_matrix_t())
+        self._matrix_t = ctypes.POINTER(cairo_matrix_t)()
         _cairo.cairo_matrix_init(self._matrix_t, xx, yx, xy, yy, x0, y0)
 
     @property
@@ -404,7 +404,6 @@ class Matrix:
         """
         _cairo.cairo_matrix_invert(self._matrix_t)
 
-    _cairo.cairo_matrix_multiply.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
     def multiply(self, matrix2):
         """
         Multiplies the affine transformations in Matrix and matrix2 together. The effect of the resulting transformation is to first apply the transformation in Matrix to the coordinates and then apply the transformation in matrix2 to the coordinates.
@@ -451,7 +450,7 @@ class Matrix:
 
     def transform_point(self, x, y):
         """
-        Transforms the point (x , y ) by matrix.
+        Transforms the point (x , y) by matrix.
         """
         x, y = ctypes.c_double(x), ctypes.c_double(y)
         _cairo.cairo_matrix_transform_point(self, ctypes.byref(x), ctypes.byref(y))
@@ -492,6 +491,7 @@ class Pattern:
     def _as_parameter_(self):
         return self._pattern_t
 
+    _cairo.cairo_pattern_get_type.argtypes = (ctypes.c_void_p, )
     @classmethod
     def _from_address(cls, address):
         pattern = object.__new__(_pattern_types[_cairo.cairo_pattern_get_type(address)])
@@ -524,9 +524,8 @@ class SolidPattern(Pattern):
     _cairo.cairo_pattern_create_rgba.argtypes = (ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
     _cairo.cairo_pattern_create_rgba.restype = ctypes.c_void_p
     def __init__(self, red, green, blue, alpha=1.0):
-        self._pattern_t = _cairo.cairo_pattern_create_rgba(red, green, blue, alpha)
+        self._pattern_t = ctypes.c_void_p(_cairo.cairo_pattern_create_rgba(red, green, blue, alpha))
 
-    _cairo.cairo_pattern_get_rgba.argtypes = (ctypes.c_void_p, ) + tuple(ctypes.POINTER(ctypes.c_double) for i in range(4))
     def get_rgba(self):
         red, green, blue, alpha = (ctypes.c_double() for i in range(4))
         _cairo.cairo_pattern_get_rgba(self, *tuple(ctypes.byref(i) for i in (red, green, blue, alpha)))
@@ -534,13 +533,15 @@ class SolidPattern(Pattern):
 
 class SurfacePattern(Pattern):
 
+    _cairo.cairo_pattern_create_for_surface.argtypes = (ctypes.c_void_p, )
+    _cairo.cairo_pattern_create_for_surface.restype = ctypes.c_void_p
     def __init__(self, surface):
-        self._pattern_t = _cairo.cairo_pattern_create_for_surface(surface)
+        self._pattern_t = ctypes.c_void_p(_cairo.cairo_pattern_create_for_surface(surface))
 
     def get_surface(self):
-        surface = ctypes.pointer(ctypes.c_void_p())
+        surface = ctypes.c_void_p()
         _cairo.cairo_pattern_get_surface(self, surface)
-        return Surface._from_address(surface.contents.value)
+        return Surface._from_address(surface.value)
 
 class Gradient(Pattern):
 
@@ -617,7 +618,7 @@ class ScaledFont:
     There are various types of scaled fonts, depending on the font backend they use.
     """
     def __init__(self, font_face, font_matrix, ctm, font_options):
-        self._scaled_font_t = _cairo.cairo_scaled_font_create(font_face, font_matrix, ctm, font_options)
+        self._scaled_font_t = ctypes.c_void_p(_cairo.cairo_scaled_font_create(font_face, font_matrix, ctm, font_options))
 
     @property
     def _as_parameter_(self):
@@ -642,6 +643,7 @@ class ScaledFont:
         _cairo.cairo_scaled_font_get_ctm(self, ctm)
         return ctm
 
+    _cairo.cairo_scaled_font_get_font_face.restype = ctypes.c_void_p
     def get_font_face(self):
         return FontFace._from_address(_cairo.cairo_scaled_font_get_font_face(self))
 
@@ -706,6 +708,7 @@ class Surface:
         return self._surface_t
 
     #benjaminish
+    _cairo.cairo_surface_get_type.argtypes = (ctypes.c_void_p, )
     @classmethod
     def _from_address(cls, address):
         """Get a specific Surface object from the given address
