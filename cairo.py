@@ -320,6 +320,12 @@ class cairo_glyph_t(ctypes.Structure):
     ("x", ctypes.c_double),
     ("y", ctypes.c_double)]
 
+"""
+cairo_status_t
+(*cairo_write_func_t) (void *closure,
+                       const unsigned char *data,
+                       unsigned int length);
+"""                    
 cairo_write_func_t = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)
 
 cairo_read_func_t = cairo_write_func_t
@@ -563,8 +569,6 @@ class RadialGradient(Gradient):
         x0, y0, r0, x1, y1, r1 = tuple(ctypes.c_double() for i in range(6))
         _cairo.cairo_pattern_get_linear_points(self, *tuple(ctypes.byref(i) for i in (x0, y0, r0, x1, y1, r1)))
         return tuple(i.value for i in (x0, y0, r0, x1, y1, r1))
-
-#############
 
 class FontFace:
     """
@@ -1562,7 +1566,19 @@ class Context:
         return _cairo.cairo_get_tolerance(self._cairo_t)
 
     def glyph_extents(self, glyphs, num_glyphs=None):
-        pass
+        """
+        Gets the extents for an array of glyphs. The extents describe a user-space rectangle that encloses the “inked” portion of the glyphs, (as they would be drawn by Context.show_glyphs()). Additionally, the x_advance and y_advance values indicate the amount by which the current point would be advanced by Context.show_glyphs().
+
+        Note that whitespace glyphs do not contribute to the size of the rectangle (extents.width and extents.height).
+        """
+        if not num_glyphs: num_glyphs = len(glyphs)
+
+        glyphs = (cairo_glyph_t * num_glyphs)(*glyphs[:num_glyphs])
+        extents = cairo_text_extents_t()
+
+        _cairo.cairo_glyph_extents(self, glyphs, num_glyphs, ctypes.byref(extents))
+
+        return tuple(getattr(extents, i[0]) for i in extents._fields_)
 
     def has_current_point(self):
         """
@@ -2005,13 +2021,13 @@ class Context:
         """
         _cairo.cairo_set_tolerance(self, tolerance)
 
-    def show_glyphs(self, glyphs, num_glyphs=-1):
+    def show_glyphs(self, glyphs, num_glyphs=None):
         """
         @param glyphs (a sequence of (int, float, float)): glyphs to show
         @param num_glyphs (int): number of glyphs to show, defaults to showing all glyphs
         A drawing operator that generates the shape from an array of glyphs, rendered according to the current font face, font size (font matrix), and font options.
         """
-        if num_glyphs < 0: num_glyphs = len(glyphs)
+        if not num_glyphs: num_glyphs = len(glyphs)
         array = (cairo_glyph_t * num_glyphs)(*glyphs[:num_glyphs])
         # something just feels no sense here.
         _cairo.show_glyphs(self, array, num_glyphs)
