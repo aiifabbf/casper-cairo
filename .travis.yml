@@ -13,4 +13,4 @@ before_install:
     - sudo apt-get -qq update
     - sudo apt-get install libcairo2
 # command to run tests
-script: nosetests ./tests
+script: nosetests ./test
