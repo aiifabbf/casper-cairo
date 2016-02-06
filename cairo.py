@@ -237,7 +237,7 @@ PATTERN_TYPE_SURFACE = 1
 PATTERN_TYPE_LINEAR = 2
 PATTERN_TYPE_RADIAL = 3
 PATTERN_TYPE_MESH = 4
-PATTERN_TYPE_RASTER_SOURC = 5
+PATTERN_TYPE_RASTER_SOURCE = 5
 
 class cairo_rectangle_t(ctypes.Structure):
     _fields_ = [
@@ -1108,10 +1108,7 @@ class Context:
         cairo.Context() in pycairo
         cairo_create() in cairo
         """
-        try:
-            self._cairo_t = _cairo.cairo_create(target._surface_t)
-        except:
-            raise Error("MemoryError: Insufficient memory.")
+        self._cairo_t = ctypes.c_void_p(_cairo.cairo_create(target._surface_t)) # No way to cause that error. 
 
     @property
     def _as_parameter_(self):
@@ -1126,7 +1123,7 @@ class Context:
         cairo.Context.append_path() in pycairo
         cairo_append_path() in cairo
         """
-        _cairo.cairo_append_path(path._path_t)
+        _cairo.cairo_append_path(self, path._path_t)
 
     _cairo.cairo_arc.argtypes = (ctypes.c_void_p, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double)
     def arc(self, xc, yc, radius, angle1, angle2):
@@ -2227,7 +2224,7 @@ _pattern_types = {
     PATTERN_TYPE_LINEAR: LinearGradient,
     PATTERN_TYPE_RADIAL: RadialGradient,
     PATTERN_TYPE_MESH: None,
-    PATTERN_TYPE_RASTER_SOURC: None,
+    PATTERN_TYPE_RASTER_SOURCE: None,
 }
 
 def cairo_version():
@@ -2239,43 +2236,3 @@ def cairo_version_string():
 
 version = cairo_version_string()
 version_info = tuple(int(i) for i in cairo_version_string().split("."))
-
-if __name__ == "__main__":
-    # testing
-    #import array
-    bb = bytearray(400 * 400 * 4)
-    #bb = array.array("I", range(400*400))
-    #b = (ctypes.c_char*len(bb)).from_buffer(bb)
-    #b = ctypes.addressof(ctypes.c_char.from_buffer(bb))
-    #b = ctypes.cast(b, ctypes.POINTER(ctypes.c_int))
-    s = ImageSurface.create_for_data(bb, FORMAT_RGB24, 400, 400, 1600)
-    c = Context(s)
-    linear = LinearGradient(0, 0, 400, 400)
-    linear.add_color_stop_rgb(0, 0, 0.3, 0.8)
-    linear.add_color_stop_rgb(1, 0, 0.8, 0.3)
-    c.set_source(linear)
-    c.paint()
-
-    radial = RadialGradient(200, 200, 25, 200, 200, 75)
-    #radial.add_color_stop_rgba(0, 0, 0, 0, 1)
-    #radial.add_color_stop_rgba(0.5, 0, 0, 0, 0)
-    radial.add_color_stop_rgb(0, 1, 1, 1)
-    radial.add_color_stop_rgb(1, 0.7, 0.7, 0.7)
-
-    c.set_source(linear)
-    c.mask(radial)
-    c.set_font_size(50)
-    c.move_to(0, 400)
-    c.set_source_rgb(1, 1, 1)
-    c.show_text("hello")
-
-    with open("hello.png", "wb+") as f:
-        s.write_to_png(f)
-
-    s.finish()
-
-    #s = SVGSurface(b"output.svg", 1000, 1000)
-    #c = Context(s)
-    #c.move_to(0, 0)
-    #c.line_to(1000, 1000)
-    #c.stroke()
